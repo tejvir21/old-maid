@@ -1,0 +1,18 @@
+{
+  "name": "old-maid",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": ["shared", "backend", "frontend"],
+  "scripts": {
+    "build:shared": "npm run build -w @old-maid/shared",
+    "build": "npm run build:shared && npm run build -w backend && npm run build -w frontend",
+    "test": "npm run build:shared && npm run build -w backend && npm run test -w @old-maid/shared && npm run test -w backend && npm run test -w frontend",
+    "typecheck": "npm run build:shared && npm run typecheck -w backend && npm run typecheck -w frontend",
+    "dev:backend": "npm run build:shared && npm run dev -w backend",
+    "dev:frontend": "npm run build:shared && npm run dev -w frontend"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}

@@ -1,0 +1,81 @@
+@import "@fontsource/cormorant-garamond/latin-500.css";
+@import "@fontsource/cormorant-garamond/latin-700.css";
+@import "@fontsource/ibm-plex-mono/latin-400.css";
+@import "@fontsource/ibm-plex-mono/latin-500.css";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --c-ink: 11 11 13;
+  --c-coal: 22 22 26;
+  --c-ash: 38 38 44;
+  --c-bone: 226 220 210;
+  --c-dim: 146 141 132;
+  --c-blood: 150 20 30;
+  --c-ember: 214 72 62;
+  color-scheme: dark;
+}
+[data-theme="ember"] {
+  --c-ink: 16 10 8; --c-coal: 28 17 13; --c-ash: 48 30 24;
+  --c-bone: 238 222 200; --c-dim: 160 138 118; --c-blood: 176 38 22; --c-ember: 232 108 58;
+}
+[data-theme="contrast"] {
+  --c-ink: 0 0 0; --c-coal: 10 10 10; --c-ash: 52 52 52;
+  --c-bone: 255 255 255; --c-dim: 205 205 205; --c-blood: 255 64 64; --c-ember: 255 120 90;
+}
+
+html, body, #root { height: 100%; }
+body {
+  @apply bg-ink text-bone font-mono antialiased;
+  margin: 0;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* The room: a dim office, one lamp over the table, blinds, grain. */
+.room {
+  position: relative;
+  min-height: 100%;
+  background:
+    radial-gradient(ellipse 60% 50% at 50% 38%, rgb(var(--c-blood) / 0.20), transparent 70%),
+    radial-gradient(ellipse 120% 90% at 50% 40%, transparent 35%, rgb(0 0 0 / 0.85) 100%),
+    repeating-linear-gradient(180deg, rgb(255 255 255 / 0.018) 0 2px, transparent 2px 22px),
+    rgb(var(--c-ink));
+}
+.room::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0.07; mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+.title-display { font-family: "Cormorant Garamond", Georgia, serif; letter-spacing: 0.32em; text-transform: uppercase; }
+.felt {
+  background:
+    radial-gradient(ellipse at 50% 35%, rgb(var(--c-blood) / 0.34), rgb(var(--c-coal)) 72%),
+    rgb(var(--c-coal));
+  box-shadow: inset 0 0 0 2px rgb(var(--c-ash)), inset 0 0 60px rgb(0 0 0 / 0.7), 0 30px 80px -20px rgb(0 0 0 / 0.9);
+}
+.card-back {
+  background:
+    repeating-conic-gradient(from 45deg at 50% 50%, rgb(var(--c-blood)) 0 25%, rgb(var(--c-ink)) 0 50%) 0 0 / 14px 14px;
+  box-shadow: inset 0 0 0 3px rgb(var(--c-bone) / 0.9), inset 0 0 0 5px rgb(var(--c-blood));
+}
+.focus-ring:focus-visible, button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid rgb(var(--c-bone)); outline-offset: 3px; border-radius: 4px;
+}
+.btn {
+  @apply inline-flex items-center justify-center gap-2 border border-bone/30 bg-coal/80 px-5 py-3 text-sm uppercase tracking-[0.25em] text-bone transition;
+  min-height: 48px; /* touch friendly */
+}
+.btn:hover:not(:disabled) { @apply border-ember bg-blood/30; }
+.btn:disabled { @apply opacity-40; cursor: not-allowed; }
+.btn-primary { @apply border-ember bg-blood/60; }
+.btn-primary:hover:not(:disabled) { @apply bg-blood; }
+.pulse-ring { animation: pulse 1.8s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgb(var(--c-ember) / 0.55);} 50% { box-shadow: 0 0 0 10px rgb(var(--c-ember) / 0);} }
+.no-motion *, .no-motion *::before, .no-motion *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
+}
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0,0,0,0); border: 0; }

@@ -4,11 +4,31 @@ import { useServices } from "../app/context";
 
 export function NetBadge() {
   const net = useNetStore();
-  const label = net.suspended ? "OFFLINE MODE" : net.state === "online" ? "ONLINE" : net.state === "offline" ? "OFFLINE" : "SERVER UNREACHABLE";
+  // "blocked" is a browser-side refusal (Brave Shields / an extension), NOT a dead server, and
+  // is labelled differently so the user knows to allow the site rather than wait for a restart.
+  const label = net.suspended
+    ? "OFFLINE MODE"
+    : net.state === "online"
+      ? "ONLINE"
+      : net.state === "offline"
+        ? "OFFLINE"
+        : net.state === "blocked"
+          ? "REQUEST BLOCKED"
+          : "SERVER UNREACHABLE";
   const up = net.state === "online" && !net.suspended;
+  const tone = net.state === "blocked" ? "text-dim" : up ? "text-bone" : "text-ember";
+  const title =
+    net.state === "blocked"
+      ? "Your browser is blocking requests to the game server. Allow this site in Brave Shields or your ad-blocker, then reload. Offline play is unaffected."
+      : net.state === "unreachable"
+        ? "Could not reach the game server. Retrying with backoff; offline play is unaffected."
+        : undefined;
   return (
-    <span role="status" aria-label={`Network: ${label}`} className={`inline-flex items-center gap-1.5 text-[11px] uppercase tracking-[0.25em] ${up ? "text-bone" : "text-ember"}`}>
-      <span aria-hidden>{up ? "●" : net.state === "unreachable" ? "○" : "●"}</span>
+    <span
+      role="status" title={title} aria-label={`Network: ${label}`}
+      className={`inline-flex items-center gap-1.5 text-[11px] uppercase tracking-[0.25em] ${tone}`}
+    >
+      <span aria-hidden>{up ? "●" : "○"}</span>
       {label}
     </span>
   );

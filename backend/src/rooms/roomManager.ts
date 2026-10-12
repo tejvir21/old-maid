@@ -11,6 +11,7 @@ import type { Logger } from "../util/logger.js";
 import type { Scheduler } from "../util/scheduler.js";
 import { err } from "../util/errors.js";
 import type { Emitter, Room, RoomPlayer, Timing } from "./roomTypes.js";
+import { buildSlotTable, consumeSlot, resolveSlot, type SlotTable } from "./drawSlots.js";
 
 export interface RoomManagerDeps {
   store: Store;
@@ -205,7 +206,7 @@ export class RoomManager {
       code: this.genCode(), hostId: playerId, status: "waiting",
       players: [{ id: playerId, name: n.name, isAi: false, connected: true, disconnectedAt: null, timedOut: false, left: false, joinedAt: now }],
       maxPlayers: this.d.settings.getGame().maxPlayers, createdAt: now, startedAt: null, finishedAt: null, idleSince: null,
-      session: null, result: null, pausedFor: null, locked: false,
+      session: null, result: null, pausedFor: null, locked: false, slots: null,
       timers: { turn: null, ai: null, reconnect: new Map() },
     };
     this.rooms.set(room.code, room);
@@ -318,6 +319,8 @@ export class RoomManager {
       room.pausedFor = null;
       this.emitRoom(room, "game_resumed");
       this.broadcastState(room);
+      // Re-mint so a reconnecting player never inherits (or an observer never sees) stale slots.
+      this.refreshTurnSlots(room);
       this.scheduleTurn(room);
       return;
     }
@@ -418,7 +421,11 @@ export class RoomManager {
     for (const p of this.humans(room)) if (p.connected) this.d.emitter.emit(p.id, "game_started", this.buildView(room, p.id));
     this.saveSnapshot(room);
     if (session.finished) this.finishGame(room);
-    else this.scheduleTurn(room);
+    else {
+      // The first player to act receives their opening slots.
+      this.refreshTurnSlots(room);
+      this.scheduleTurn(room);
+    }
     return { ok: true };
   }
 
@@ -432,13 +439,73 @@ export class RoomManager {
     const p = this.player(room, playerId);
     if (!p || p.left || p.isAi) return err("NOT_IN_ROOM", "You are not a player in this game.");
 
+    // Replay is rejected first: a repeated action must never produce a second effect,
+    // regardless of whose turn it now is.
+    if (room.session.isDuplicateAction(playerId, parsed.data.actionId)) {
+      return err("DUPLICATE_ACTION", "That action was already processed.");
+    }
+    // A client working from an out-of-date view is told the turn moved on, which is the most
+    // precise answer and leaks nothing about slot validity.
+    if (parsed.data.turnId !== room.session.turnId) return err("STALE_TURN", "That action is out of date.");
+    // Turn ownership is checked BEFORE the slot, so a player who is not on turn learns nothing
+    // about whether any slot id is valid.
+    if (room.session.currentPlayerId !== playerId) return err("NOT_YOUR_TURN", "It is not your turn.");
+
+    // The client never names a card; it names an opaque slot minted for THIS player, THIS
+    // target and THIS turn. Resolution happens here and stays here.
+    const res = resolveSlot(room.slots, playerId, parsed.data.targetPlayerId, parsed.data.turnId, parsed.data.slotId);
+    if (!res.ok) return err(res.reason, res.reason === "STALE_TURN"
+      ? "That turn has moved on. Wait for your next turn."
+      : "That card is no longer available.");
+
     const r = room.session.applyDraw({
-      actorId: playerId, targetId: parsed.data.targetPlayerId, cardIndex: parsed.data.cardIndex,
+      actorId: playerId, targetId: parsed.data.targetPlayerId, cardIndex: res.index,
       turnId: parsed.data.turnId, actionId: parsed.data.actionId,
     });
     if (!r.ok) return err(r.code, r.message);
+    // A slot is single-use even if the turn somehow continues.
+    consumeSlot(room.slots, parsed.data.targetPlayerId, parsed.data.slotId);
     this.afterDraw(room, r.outcome);
     return { ok: true };
+  }
+
+  /**
+   * Mints fresh viewer-specific slots for `playerId` and sends them privately.
+   *
+   * Called every time a human becomes the current player, so the presentation order is
+   * re-randomised each turn and an observer can never map a screen position to a card.
+   */
+  private issueDrawSlots(room: Room, playerId: string): void {
+    const s = room.session;
+    const p = this.player(room, playerId);
+    if (!s || !p || p.isAi || p.left || s.finished || room.status !== "playing" || s.currentPlayerId !== playerId) return;
+    if (!p.connected) return;
+    const targets = this.eligibleTargets(room, playerId);
+    if (targets.length === 0) return;
+    const { table, payload } = buildSlotTable({
+      roomCode: room.code,
+      viewerId: playerId,
+      turnId: s.turnId,
+      targets: targets.map((t) => ({ playerId: t.id, cardCount: s.cardCount(t.id) })),
+      rand: this.rng,
+    });
+    room.slots = table;
+    this.d.emitter.emit(playerId, "draw_slots", payload);
+  }
+
+  /** Players this viewer may draw from right now (everyone except self who still holds cards). */
+  private eligibleTargets(room: Room, playerId: string): RoomPlayer[] {
+    const s = room.session;
+    if (!s) return [];
+    return room.players.filter((p) => p.id !== playerId && s.cardCount(p.id) > 0);
+  }
+
+  /** Invalidates slots and re-mints them for whoever is now on turn. */
+  private refreshTurnSlots(room: Room): void {
+    room.slots = null;
+    const s = room.session;
+    if (!s || s.finished) return;
+    this.issueDrawSlots(room, s.currentPlayerId);
   }
 
   private afterDraw(room: Room, outcome: import("@old-maid/shared").DrawOutcome): void {
@@ -450,7 +517,9 @@ export class RoomManager {
       this.d.emitter.emit(actor.id, "card_drawn", { card: res.card, pairFormed: res.pairFormed, pairCards: res.pairCards, fromPlayerId: res.targetId });
     }
     const seq = outcome.events.find((e) => e.type === "card_drawn")?.seq ?? 0;
-    this.emitRoom(room, "draw_public", { actorId: res.actorId, targetId: res.targetId, cardIndex: res.cardIndex, pairFormed: res.pairFormed, seq });
+    // Public event carries NO card index and NO identity: an index would let an observer track
+    // which physical card was removed from which hand.
+    this.emitRoom(room, "draw_public", { actorId: res.actorId, targetId: res.targetId, pairFormed: res.pairFormed, seq });
     if (res.pairFormed) this.emitRoom(room, "pair_formed", { playerId: res.actorId });
     if (res.gameOver) {
       this.finishGame(room);
@@ -459,6 +528,8 @@ export class RoomManager {
     this.emitRoom(room, "turn_changed", { currentPlayerId: s.currentPlayerId, turnId: s.turnId });
     this.broadcastState(room);
     this.saveSnapshot(room);
+    // Fresh, re-randomised slots for whoever is now on turn.
+    this.refreshTurnSlots(room);
     this.scheduleTurn(room);
   }
 
@@ -533,6 +604,7 @@ export class RoomManager {
     room.status = "finished";
     room.finishedAt = this.now();
     room.pausedFor = null;
+    room.slots = null; // no slot may outlive the game
     const winnerId = s.winnerId;
     room.result = { winnerId, abandoned: false };
     const winner = winnerId ? this.player(room, winnerId) : undefined;
@@ -560,6 +632,7 @@ export class RoomManager {
     room.status = "finished";
     room.finishedAt = this.now();
     room.pausedFor = null;
+    room.slots = null;
     room.result = { winnerId: null, abandoned: true };
     this.emitRoom(room, "server_notice", { message: "The match was ended without a winner." });
     this.broadcastState(room);
@@ -594,7 +667,7 @@ export class RoomManager {
         if (!p.isAi) this.playerRoom.delete(p.id);
       }
     }
-    room.status = "waiting"; room.session = null; room.result = null; room.pausedFor = null;
+    room.status = "waiting"; room.session = null; room.result = null; room.pausedFor = null; room.slots = null;
     room.startedAt = null; room.finishedAt = null;
     this.persist("room-rematch", this.d.store.rooms.upsert(this.roomRecord(room, "waiting")));
     this.broadcastState(room);
@@ -796,6 +869,11 @@ export class RoomManager {
   /** Test/debug only – never exposed through any API. */
   _debugSession(code: string): GameSession | null {
     return this.rooms.get(code)?.session ?? null;
+  }
+
+  /** Test/debug only – the server-side slot table, for asserting the mapping is never sent out. */
+  _debugSlots(code: string): SlotTable | null {
+    return this.rooms.get(code)?.slots ?? null;
   }
 }
 

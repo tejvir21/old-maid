@@ -107,6 +107,11 @@ export class GameSession {
     if (this.publicEvents.length > MAX_PUBLIC) this.publicEvents.splice(0, this.publicEvents.length - MAX_PUBLIC);
   }
 
+  /** Replay guard: has this exact (actor, actionId) already been processed? */
+  isDuplicateAction(actorId: string, actionId: string): boolean {
+    return this.seen.has(`${actorId}:${actionId}`);
+  }
+
   applyDraw(req: { actorId: string; targetId: string; cardIndex: number; turnId: number; actionId: string }): SessionDrawResult {
     if (this.abandoned) return { ok: false, code: "BAD_REQUEST", message: "The game is over." };
     const key = `${req.actorId}:${req.actionId}`;

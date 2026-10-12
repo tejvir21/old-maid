@@ -52,7 +52,7 @@ export function OfflinePlay() {
     <>
       <GameTable
         vm={vm} reduce={reduce} busy={!!ui.reveal}
-        onDraw={(id, i) => void svc.offline.humanDraw(id, i)}
+        onDraw={(id, choice) => void svc.offline.humanDraw(id, Number(choice))}
         header={
           <>
             <NetBadge />

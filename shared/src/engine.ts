@@ -126,10 +126,23 @@ export function createGame(
   return { state, events };
 }
 
-function finish(state: GameState, events: GameEvent[]): GameState {
+/**
+ * Ends the game.
+ *
+ * The winner is ALWAYS the Joker holder — the authoritative rule. `degenerate` marks the
+ * unreachable "nobody holds any card and the Joker is not in play" state, which still resolves
+ * to a winner if a Joker is somehow present rather than crashing or looping.
+ */
+function finish(state: GameState, events: GameEvent[], degenerate = false): GameState {
   state.phase = "finished";
   const holder = getJokerHolder(state);
   state.winnerId = holder ? holder.id : null;
+  if (degenerate) {
+    events.push(event(state, "game_over", holder
+      ? `The Joker was held by ${holder.name}. ${holder.name} wins.`
+      : "The game ended with no cards in play."));
+    return state;
+  }
   events.push(
     event(state, "game_over", holder ? `The Joker was held by ${holder.name}. ${holder.name} wins.` : "Game over.", {
       ...(holder ? { actorId: holder.id } : {}),
@@ -214,11 +227,17 @@ export function drawCard(prev: GameState, req: DrawRequest): EngineResult<DrawOu
     finish(state, events);
   } else {
     const nextIdx = nextPlayer(state, actorIdx);
-    if (nextIdx < 0) throw new Error("Invariant violated: no player with cards but game not over");
-    state.currentPlayerIndex = nextIdx;
-    state.turnId += 1;
-    const np = state.players[nextIdx] as EnginePlayer;
-    events.push(event(state, "turn_changed", `${np.name}'s turn.`, { actorId: np.id }));
+    if (nextIdx < 0) {
+      // Unreachable while the Joker invariant holds (the Joker can never be discarded, so at
+      // least one player always holds a card). Handled explicitly anyway: a 500 here would
+      // leave every client waiting for a turn that never comes.
+      finish(state, events, true);
+    } else {
+      state.currentPlayerIndex = nextIdx;
+      state.turnId += 1;
+      const np = state.players[nextIdx] as EnginePlayer;
+      events.push(event(state, "turn_changed", `${np.name}'s turn.`, { actorId: np.id }));
+    }
   }
 
   return {

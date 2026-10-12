@@ -120,6 +120,8 @@ function OnlineGame({ ctl }: { ctl: OnlineController }) {
   const pending = useStore(ctl.store, (s) => s.pendingDraw);
   const error = useStore(ctl.store, (s) => s.error);
   const notices = useStore(ctl.store, (s) => s.notices);
+  const drawSlots = useStore(ctl.store, (s) => s.drawSlots);
+  const slotsTurnId = useStore(ctl.store, (s) => s.slotsTurnId);
   const [privateLog, setPrivateLog] = useState<{ id: number; text: string }[]>([]);
   const [chatOpen, setChatOpen] = useState(false);
   const seq = useRef(0);
@@ -132,7 +134,10 @@ function OnlineGame({ ctl }: { ctl: OnlineController }) {
   }, [revealed?.at]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pausedSecs = useSecondsLeft(view.game?.paused?.secondsLeft ?? null, view.game?.paused?.playerId);
-  const vm0 = useMemo(() => onlineVm(view, privateLog, pausedSecs), [view, privateLog, pausedSecs]);
+  const vm0 = useMemo(
+    () => onlineVm(view, privateLog, pausedSecs, view.game && view.game.turnId === slotsTurnId ? drawSlots : []),
+    [view, privateLog, pausedSecs, drawSlots, slotsTurnId],
+  );
   const blocked = !!revealed || pending || conn !== "connected";
   const vm = { ...vm0, canAct: vm0.canAct && !blocked };
   useEffect(() => { if (vm.canAct) playSound("turn"); }, [vm.canAct]);

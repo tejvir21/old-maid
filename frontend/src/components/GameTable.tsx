@@ -12,7 +12,8 @@ export interface GameTableProps {
   reduce: boolean;
   /** True while a draw request is in flight (offline: reveal playing; online: awaiting server). */
   busy: boolean;
-  onDraw(targetId: string, cardIndex: number): void;
+  /** `choice` is an opaque server slot id online, or a positional index string offline. */
+  onDraw(targetId: string, choice: string): void;
   header?: ReactNode;
   overlays?: ReactNode;
   banner?: ReactNode;
@@ -70,13 +71,24 @@ function Seat({ s, vm, onPick, compact }: { s: SeatVM; vm: TableVM; onPick(id: s
   );
 }
 
-function DrawPanel({ seat, onClose, onDraw, busy, reduce }: { seat: SeatVM; onClose(): void; onDraw(i: number): void; busy: boolean; reduce: boolean }) {
+/**
+ * Draw chooser.
+ *
+ * Online, `choices` are opaque server-issued slot ids: the React key is the slot id, never an
+ * array index or card id, and the DOM exposes no identity at all. The order is re-randomised by
+ * the server every turn and framer-motion's `layout` animates the reshuffle so a card visibly
+ * moves. Offline, `choices` is positional (`"0"`, `"1"`, …) against the local engine only.
+ */
+function DrawPanel({ seat, choices, onClose, onDraw, busy, reduce }: {
+  seat: SeatVM; choices: string[]; onClose(): void; onDraw(slot: string): void; busy: boolean; reduce: boolean;
+}) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   useEffect(() => { refs.current[0]?.focus(); }, []);
+  const n = choices.length;
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "Escape") { onClose(); return; }
     const i = refs.current.findIndex((r) => r === document.activeElement);
-    if (e.key === "ArrowRight" || e.key === "ArrowDown") { e.preventDefault(); refs.current[Math.min(seat.cardCount - 1, i + 1)]?.focus(); }
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") { e.preventDefault(); refs.current[Math.min(n - 1, i + 1)]?.focus(); }
     if (e.key === "ArrowLeft" || e.key === "ArrowUp") { e.preventDefault(); refs.current[Math.max(0, i - 1)]?.focus(); }
   };
   return (
@@ -89,14 +101,20 @@ function DrawPanel({ seat, onClose, onDraw, busy, reduce }: { seat: SeatVM; onCl
       <div className="w-full max-w-xl border border-bone/15 bg-coal/95 p-5 shadow-glow">
         <div className="mb-1 flex items-center gap-3"><Avatar name={seat.name} size={36} /><h2 className="title-display text-xl">{seat.name}</h2></div>
         <p className="mb-4 text-xs uppercase tracking-[0.3em] text-dim">Choose one card. You won't know what it is until it's yours.</p>
+        {n === 0 && (
+          <p className="py-6 text-center text-sm text-dim">
+            No cards available from {seat.name} right now.
+          </p>
+        )}
         <div className="flex flex-wrap justify-center gap-2">
-          {Array.from({ length: seat.cardCount }, (_, i) => (
+          {choices.map((choice, i) => (
             <motion.button
-              key={i} ref={(el) => { refs.current[i] = el; }} type="button" disabled={busy}
-              onClick={() => onDraw(i)}
+              key={choice} ref={(el) => { refs.current[i] = el; }} type="button" disabled={busy}
+              layout={!reduce}
+              onClick={() => onDraw(choice)}
               initial={reduce ? false : { opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: reduce ? 0 : i * 0.03 }}
               whileHover={reduce ? undefined : { y: -8 }}
-              aria-label={`Card ${i + 1} of ${seat.cardCount}`}
+              aria-label={`Card ${i + 1} of ${n}`}
               className="rounded-md hover:shadow-glow disabled:opacity-50"
             >
               <CardBack size="md" />
@@ -126,6 +144,17 @@ export function GameTable({ vm, reduce, busy, onDraw, header, overlays, banner }
   const you = vm.seats.find((s) => s.isYou);
   const targetSeat = others.find((s) => s.id === target) ?? null;
   useEffect(() => { if (!vm.canAct || (targetSeat && targetSeat.cardCount === 0)) setTarget(null); }, [vm.canAct, targetSeat]);
+
+  /**
+   * Choices offered for `targetSeat`.
+   *
+   * Online: the server's opaque slots for this turn. Offline: positional, because the whole game
+   * is local to this device and there is nothing to protect.
+   */
+  const choicesFor = (seat: SeatVM): string[] => {
+    if (vm.mode === "online") return vm.drawSlots.find((t) => t.targetId === seat.id)?.slots ?? [];
+    return Array.from({ length: seat.cardCount }, (_, i) => String(i));
+  };
 
   const n = others.length;
   const pos = (i: number) => {
@@ -195,8 +224,9 @@ export function GameTable({ vm, reduce, busy, onDraw, header, overlays, banner }
       <AnimatePresence>
         {targetSeat && vm.canAct && (
           <DrawPanel
-            seat={targetSeat} busy={busy} reduce={reduce} onClose={() => setTarget(null)}
-            onDraw={(i) => { setTarget(null); onDraw(targetSeat.id, i); }}
+            seat={targetSeat} choices={choicesFor(targetSeat)} busy={busy} reduce={reduce}
+            onClose={() => setTarget(null)}
+            onDraw={(choice) => { setTarget(null); onDraw(targetSeat.id, choice); }}
           />
         )}
       </AnimatePresence>

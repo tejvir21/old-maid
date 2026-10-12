@@ -9,8 +9,12 @@ export class ManualScheduler implements Scheduler {
   private seq = 0;
   private timers = new Map<number, { at: number; fn: () => void }>();
   now() { return this.t; }
-  setTimeout(fn: () => void, ms: number) { const id = ++this.seq; this.timers.set(id, { at: this.t + ms, fn }); return id; }
+  setTimeout(fn: () => void, ms: number) { const id = ++this.seq; this.timers.set(id, { at: this.t + ms, fn }); this._last = ms; return id; }
   clearTimeout(h: unknown) { this.timers.delete(h as number); }
+  /** Delay of the most recently scheduled timer. */
+  get lastDelay(): number { return this._last; }
+  private _last = 0;
+  get pending() { return this.timers.size; }
   advance(ms: number) {
     const target = this.t + ms;
     for (;;) {

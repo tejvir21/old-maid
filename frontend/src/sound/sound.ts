@@ -5,15 +5,33 @@ let ctx: AudioContext | null = null;
 let enabled = true;
 let musicOn = false;
 let droneNodes: { stop(): void } | null = null;
+/**
+ * Chrome/Brave block an AudioContext created before a user gesture and log
+ * "The AudioContext was not allowed to start". The context is therefore created lazily on the
+ * FIRST real interaction only; until then every sound call is a no-op.
+ */
+let unlocked = false;
 
 type AC = typeof AudioContext;
 function ac(): AudioContext | null {
+  if (!unlocked) return null;
   if (ctx) return ctx;
   const g = globalThis as unknown as { AudioContext?: AC; webkitAudioContext?: AC };
   const Ctor = g.AudioContext ?? g.webkitAudioContext;
   if (!Ctor) return null;
   try { ctx = new Ctor(); } catch { ctx = null; }
   return ctx;
+}
+
+/** Call from a real user gesture (click/tap/key). Safe to call repeatedly. */
+export function unlockAudio(): void {
+  if (unlocked) return;
+  const g = globalThis as unknown as { AudioContext?: AC; webkitAudioContext?: AC };
+  if (!g.AudioContext && !g.webkitAudioContext) return;
+  unlocked = true;
+  ac()?.resume?.().catch(() => undefined);
+  // Music may have been requested before the first gesture; start it now that audio is allowed.
+  if (musicOn) startDrone();
 }
 
 export function configureSound(opts: { sound: boolean; music: boolean }): void {

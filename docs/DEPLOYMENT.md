@@ -215,7 +215,44 @@ assets are served untouched. `sw.js` is sent `Cache-Control: no-cache` and
 
 ---
 
-## 11. Production gates before going live
+## 10b. Brave / Shields and other request blockers
+
+Some privacy browsers (Brave Shields) and ad-blockers can refuse requests to the backend, which
+surfaces as:
+
+```
+GET https://<backend>/health net::ERR_BLOCKED_BY_CLIENT
+```
+
+This is a **client-side refusal, not a server outage** — the server is usually healthy. The app is
+built to survive it:
+
+1. **Layered probe.** Connectivity is no longer decided by `/health` alone. The client tries
+   `/health`, then `/api/config`, then `POST /api/auth/guest`. Any HTTP status — including 401 or
+   429 — proves the server is reachable.
+2. **Separate state.** When every endpoint is refused client-side the UI shows
+   **REQUEST BLOCKED** with an actionable tooltip, not **SERVER UNREACHABLE**.
+3. **Failure threshold.** A single failed probe never flips the app offline; two consecutive
+   failures are required.
+4. **Bounded backoff.** Retries back off 20s → 40s → … capped at 5 minutes, so a blocked backend
+   is never hammered and no session is reset.
+5. **Offline play is always available** — it is entirely client-side and never contacts the server.
+
+**What the app deliberately does NOT do:** it never tries to evade Shields with a hidden proxy, a
+timing side-channel or any other bypass. If a browser blocks the site, the user must allow it.
+
+**If you are testing on Brave:** Shields → Content filters → *Allow this site*, or disable
+Shields for the deployment, then reload. Confirm with:
+`https://<backend>/health` returning `{"status":"ok","database":"connected"}` directly in the
+address bar.
+
+### Audio and install
+
+- The `AudioContext` is created **only after a real user gesture** (`pointerdown` / `keydown` /
+  `touchstart`), so Chrome and Brave do not log "The AudioContext was not allowed to start".
+- `beforeinstallprompt` is captured at **module scope**, not inside a `useEffect`, so the install
+  action is still offered if the event fires before React mounts. `canInstall` is true only when
+  the browser genuinely offered a prompt.
 
 1. **MongoDB is configured and tested.** Run the store contract suite against a throwaway database
    (`npx tsx scripts/withMongo.ts` in `backend/`, or `MONGODB_TEST_URI=… npm run test -w backend`)

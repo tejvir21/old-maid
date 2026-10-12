@@ -54,7 +54,7 @@ upwards as *unverified*. The two are never merged.
 ```
 shared/          rules, deck, engine, AI, zod schemas, RBAC contracts — no I/O
   src/           deck.ts rules.ts engine.ts ai.ts rng.ts types.ts protocol.ts settings.ts admin.ts
-  tests/         engine.test.ts  admin.test.ts
+  tests/         engine.test.ts  admin.test.ts  termination.test.ts
 backend/         authoritative game server
   src/auth/      authService.ts (players) · adminAuth.ts (admins) · tokens.ts
   src/game/      GameSession.ts        — authoritative state for one match
@@ -64,7 +64,7 @@ backend/         authoritative game server
   src/store/     types.ts memory.ts mongo.ts
   src/config/    env.ts                — zod-validated environment
   src/scripts/   createAdmin.ts        — secure first-SUPER_ADMIN bootstrap
-  tests/         rooms sockets http store.contract admin.security
+  tests/         rooms sockets http store.contract admin.security drawSlots privacy.slots
 frontend/        React + TypeScript PWA
   src/admin/     AdminProvider AdminLayout adminApi pages/ (12 admin routes)
   src/game/      offlineGame.ts offlineSession.ts tableVm.ts
@@ -72,7 +72,7 @@ frontend/        React + TypeScript PWA
   src/sync/      api.ts syncEngine.ts
   src/socket/    onlineClient.ts
   scripts/       verify-pwa.mjs        — build-output gate
-  tests/         offline online sync scenario ui.* admin.ui
+  tests/         offline online sync scenario ui.* admin.ui net.blocked
 docs/            PHASE_AUDIT.md ADMIN_SECURITY.md TEST_REPORT.md DEPLOYMENT.md
 ```
 
@@ -105,7 +105,7 @@ The Vite dev server proxies `/api`, `/health` and `/socket.io` to the backend, s
 ### Run the tests
 
 ```bash
-npm test                      # builds shared + backend, then ALL suites (223 tests)
+npm test                      # builds shared + backend, then ALL suites (304 tests)
 npm run test -w @old-maid/shared
 npm run test -w backend
 npm run test -w frontend

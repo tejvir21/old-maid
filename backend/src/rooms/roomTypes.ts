@@ -1,5 +1,6 @@
 import type { AiLevel, ServerToClientEvents } from "@old-maid/shared";
 import type { GameSession } from "../game/GameSession.js";
+import type { SlotTable } from "./drawSlots.js";
 
 export interface RoomPlayer {
   id: string;
@@ -37,6 +38,11 @@ export interface Room {
   result: RoomResult | null;
   pausedFor: string | null;
   locked: boolean;
+  /**
+   * Viewer-specific opaque slots for the player who may currently draw. Destroyed on every turn
+   * change so it can never be replayed or reused across turns.
+   */
+  slots: SlotTable | null;
   timers: { turn: unknown; ai: unknown; reconnect: Map<string, unknown> };
 }
 

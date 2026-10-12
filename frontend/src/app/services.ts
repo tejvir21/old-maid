@@ -47,7 +47,8 @@ export class AppServices {
     this.api = new ApiClient({ baseUrl: opts.apiUrl, repo, ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}) });
     this.net = new NetworkMonitor({
       isBrowserOnline: opts.isBrowserOnline ?? (() => (typeof navigator === "undefined" ? true : navigator.onLine)),
-      probe: () => this.api.health(),
+      // Layered probe: a blocked /health must not be mistaken for a dead backend.
+      probe: () => this.api.probe(),
       scheduler,
       ...(opts.listen ? { listen: opts.listen } : {}),
     });

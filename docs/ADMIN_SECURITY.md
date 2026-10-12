@@ -148,6 +148,36 @@ SUPER_ADMIN.
 
 ---
 
+## 7a. Card-identity privacy (opaque draw slots)
+
+Online draws do **not** name a card. The client sends an opaque, single-turn **slot id**; the
+server resolves it to a real hand index in private.
+
+| Property | How it is enforced |
+|---|---|
+| No index on the wire | `requestDrawSchema` is `.strict()`: `cardIndex` is rejected outright |
+| No stable card id | Slot ids are 128 bits from `crypto.randomBytes`, base64url; nothing is derived from rank, suit or position |
+| Randomised per turn | Fisher–Yates over the target's real indices, re-minted on every turn change |
+| Scoped | Slot table is keyed by `(room, viewer, turnId)` and maps target → slot → index |
+| Single use | `consumeSlot` removes it after resolution; the table is nulled on turn change |
+| Cross-player rejected | `resolveSlot` compares `table.viewerId` to the caller |
+| Cross-target rejected | The slot must exist in that target's map |
+| Stale turn rejected | `table.turnId` must equal the request's `turnId` |
+| Out of turn rejected | Checked before slot resolution, so nothing about slot validity leaks |
+| Cleared at game over | `room.slots = null` in `finishGame`, `finishAbandoned`, rematch and close |
+| `draw_public` carries no index | The field was removed from the public event payload |
+
+The UI keys face-down choices by slot id (not index, not card id), and `framer-motion` animates
+the reshuffle so a card visibly moves between turns.
+
+Covered by `backend/tests/drawSlots.test.ts` (16) and
+`backend/tests/privacy.slots.e2e.test.ts` (8, asserting against real serialised socket payloads).
+
+**Offline play is unaffected**: it is single-device, so the local engine resolves positions
+directly and there is nothing to protect.
+
+---
+
 ## 8. Verifying this yourself
 
 ```bash

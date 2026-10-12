@@ -19,15 +19,22 @@ export const roomCodeSchema = z
   .length(ROOM_CODE_LENGTH)
   .refine((c) => [...c].every((ch) => ROOM_CODE_ALPHABET.includes(ch)), "Invalid room code");
 
+/**
+ * A draw selects an OPAQUE SLOT, never a hand index.
+ *
+ * The slot is minted server-side for one (viewer, target, turn) and resolved back to a real
+ * card index privately. It carries no information about rank, suit or array position, so a
+ * client cannot use it (or its position on screen) to track a card across turns.
+ */
+export const requestDrawSchema = z.object({
+  targetPlayerId: z.string().min(1).max(100),
+  slotId: z.string().min(8).max(64).regex(/^[A-Za-z0-9_-]+$/, "Invalid slot"),
+  turnId: z.number().int().min(0),
+  actionId: z.string().min(1).max(64),
+}).strict(); // `cardIndex` and friends are rejected outright: a draw is a slot, never a position.
 export const createRoomSchema = z.object({ playerName: playerNameSchema });
 export const joinRoomSchema = z.object({ roomCode: roomCodeSchema, playerName: playerNameSchema });
 export const startGameSchema = z.object({ fillWithAi: z.boolean().optional(), aiDifficulty: z.enum(["easy", "normal", "hard"]).optional() });
-export const requestDrawSchema = z.object({
-  targetPlayerId: z.string().min(1).max(100),
-  cardIndex: z.number().int().min(0).max(60),
-  turnId: z.number().int().min(0),
-  actionId: z.string().min(1).max(64),
-});
 export const chatSchema = z.object({ text: z.string().trim().min(1).max(200) });
 export const EMOTES = ["😐", "😏", "😂", "😱", "🃏", "👀"] as const;
 export const emoteSchema = z.object({ emote: z.enum(EMOTES) });
@@ -35,7 +42,7 @@ export const emoteSchema = z.object({ emote: z.enum(EMOTES) });
 export type ErrorCode =
   | "ROOM_NOT_FOUND" | "ROOM_FULL" | "GAME_ALREADY_STARTED" | "INVALID_NAME" | "NAME_TAKEN"
   | "NOT_HOST" | "NOT_ENOUGH_PLAYERS" | "NOT_YOUR_TURN" | "INVALID_CARD" | "INVALID_TARGET"
-  | "STALE_TURN" | "DUPLICATE_ACTION" | "GAME_PAUSED" | "RATE_LIMITED" | "MAINTENANCE"
+  | "INVALID_SLOT" | "STALE_TURN" | "DUPLICATE_ACTION" | "GAME_PAUSED" | "RATE_LIMITED" | "MAINTENANCE"
   | "FEATURE_DISABLED" | "BANNED" | "BAD_REQUEST" | "NOT_IN_ROOM" | "INTERNAL"
   | "UNAUTHORIZED" | "FORBIDDEN" | "NOT_FOUND" | "CONFLICT" | "VALIDATION" | "PLAYER_DISCONNECTED" | "ROOM_LOCKED";
 
@@ -82,14 +89,29 @@ export interface PlayerView {
 
 export interface ChatMessagePayload { id: string; playerId: string; name: string; text: string; at: number }
 
+/** One viewer's opaque slots for a single target's hand, for one turn only. */
+export interface DrawTargetSlots {
+  targetPlayerId: string;
+  /** One opaque id per face-down card. Order carries no information. */
+  slots: string[];
+}
+
+/** Sent ONLY to the player whose turn it is, for the turn it is for. */
+export interface DrawSlotsPayload {
+  turnId: number;
+  targets: DrawTargetSlots[];
+}
+
 /** Server → client events. */
 export interface ServerToClientEvents {
   room_state: (view: PlayerView) => void;
   game_started: (view: PlayerView) => void;
   /** Sent ONLY to the drawing player: the identity of the card they drew. */
   card_drawn: (p: { card: Card; pairFormed: boolean; pairCards: [Card, Card] | null; fromPlayerId: string }) => void;
-  /** Public: someone drew (no identities). */
-  draw_public: (p: { actorId: string; targetId: string; cardIndex: number; pairFormed: boolean; seq: number }) => void;
+  /** Public: someone drew. Deliberately carries NO card index and no card identity. */
+  draw_public: (p: { actorId: string; targetId: string; pairFormed: boolean; seq: number }) => void;
+  /** Private to the acting player: opaque, per-turn slots for each eligible target. */
+  draw_slots: (p: DrawSlotsPayload) => void;
   pair_formed: (p: { playerId: string }) => void;
   turn_changed: (p: { currentPlayerId: string; turnId: number }) => void;
   player_joined: (p: { playerId: string; name: string }) => void;

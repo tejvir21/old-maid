@@ -10,36 +10,31 @@
 
 | Suite | Test files | Passed | Failed | Skipped | Not run |
 |---|---:|---:|---:|---:|---:|
-| `@old-maid/shared` (engine, rules, AI, RBAC contract) | 2 | **47** | 0 | 0 | 0 |
-| `backend` (rooms, sockets, HTTP, store contract, **admin security**) | 5 | **104** | 0 | **10** | 0 |
-| `frontend` (offline, online, sync, UI, **admin UI**) | 7 | **72** | 0 | 0 | 0 |
-| **Total** | **14** | **223** | **0** | **10** | **0** |
+| `@old-maid/shared` (engine, rules, AI, RBAC, **termination**) | 3 | **66** | 0 | 0 | 0 |
+| `backend` (rooms, sockets, HTTP, store contract, admin security, **slots**, **privacy**) | 9 + 1 | **150** | 0 | **18** | 0 |
+| `frontend` (offline, online, sync, UI, admin UI, **connectivity**) | 8 | **88** | 0 | 0 | 0 |
+| **Total** | **20** | **304** | **0** | **18** | **0** |
 
-Previous baseline recorded in the project README was 164 tests. The suite grew by **59** tests
-(12 shared RBAC + 32 backend admin security + 15 frontend admin UI). No test was removed, skipped
-or weakened.
-
-### The 10 skipped tests
-
-`backend/tests/store.contract.test.ts` runs the same contract against `MongoStore`. Ten cases are
-`describe.skip` unless `MONGODB_TEST_URI` is present:
-
-```
-Tests  104 passed | 10 skipped (114)
-```
-
-These are **skipped, not passed.** They were never executed in this environment. To run them against
-a disposable database:
+### 1a. MongoDB integration
 
 ```bash
-MONGODB_TEST_URI=mongodb+srv://user:pass@cluster/oldmaid_test npm run test -w backend
+cd backend && npx tsx scripts/withMongo.ts
 ```
 
-Because MongoDB was unavailable, the **new** `MongoStore` admin collections are type-checked and
-code-reviewed but **have not been executed**.
+```
+Tests  168 passed (168)
+```
 
----
+The 18 tests skipped without a database are the `MongoStore` halves of the store contract and the
+production guest -> socket -> room flow. They are **skipped, never reported as passing**.
 
+### Issue-specific coverage
+
+| Issue | Tests |
+|---|---|
+| 1 - Brave / blocked requests | `frontend/tests/net.blocked.test.ts` (16): block classification, layered probe fallback, failure threshold, bounded backoff, no concurrent probe stacking, session preserved, no Shields bypass |
+| 2 - Joker position tracking | `backend/tests/drawSlots.test.ts` (16) + `backend/tests/privacy.slots.e2e.test.ts` (8, real socket payloads) + `frontend/tests/ui.online.test.tsx` ("never a card index") |
+| 3 - game termination | `shared/tests/termination.test.ts` (19): 2-7 players, every AI difficulty x25 seeds, no draw after finish, replay refused, empty hands, degenerate state, card conservation |
 ## 2. Build and typecheck
 
 | Step | Command | Result |

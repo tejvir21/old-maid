@@ -4,7 +4,8 @@ import { newId } from "../offline/ids";
 import { OnlineClient, type ConnStatus, type OnlineClientOptions } from "../socket/onlineClient";
 
 export interface RevealedCard { card: Card; pairFormed: boolean; pairCards: [Card, Card] | null; fromPlayerId: string; at: number }
-export interface PublicDraw { actorId: string; targetId: string; cardIndex: number; pairFormed: boolean; seq: number }
+/** Public draw notice. Carries NO card identity and NO hand index, by design. */
+export interface PublicDraw { actorId: string; targetId: string; pairFormed: boolean; seq: number }
 
 export interface OnlineState {
   conn: ConnStatus;
@@ -21,11 +22,18 @@ export interface OnlineState {
   authFailed: boolean;
   /** Last pause message seen (game_paused events carry a fresh countdown). */
   pause: { playerId: string; secondsLeft: number; receivedAt: number } | null;
+  /**
+   * Opaque, server-issued slots for the current turn, valid only for `slotsTurnId`.
+   * Never contains a card identity or a hand index.
+   */
+  drawSlots: { targetId: string; slots: string[] }[];
+  slotsTurnId: number | null;
 }
 
 const initial = (): OnlineState => ({
   conn: "disconnected", view: null, revealed: null, lastDraw: null, pendingDraw: false, gameOver: null,
   chat: [], emotes: [], notices: [], error: null, authFailed: false, pause: null,
+  drawSlots: [], slotsTurnId: null,
 });
 
 export type OnlineStore = StoreApi<OnlineState>;
@@ -39,7 +47,7 @@ export interface OnlineController {
   joinRoom(code: string, name: string): Promise<string | null>;
   leave(): Promise<void>;
   start(fillWithAi: boolean, level?: "easy" | "normal" | "hard"): Promise<string | null>;
-  draw(targetId: string, cardIndex: number): Promise<string | null>;
+  draw(targetId: string, choice: string): Promise<string | null>;
   sendChat(text: string): Promise<void>;
   emote(e: string): Promise<void>;
   rematch(): Promise<string | null>;
@@ -72,8 +80,10 @@ export function createOnlineController(opts: Omit<OnlineClientOptions, "handlers
             : fresh ? null : s.gameOver,
         };
       }),
-      cardDrawn: (p) => set({ revealed: { ...p, at: Date.now() }, pendingDraw: false }),
+      cardDrawn: (p) => set({ revealed: { ...p, at: Date.now() }, pendingDraw: false, drawSlots: [], slotsTurnId: null }),
       drawPublic: (lastDraw) => set({ lastDraw }),
+      // Slots are single-turn: they are dropped the instant the turn moves on.
+      drawSlots: (p) => set({ drawSlots: p.targets.map((t) => ({ targetId: t.targetPlayerId, slots: t.slots })), slotsTurnId: p.turnId }),
       pairFormed: () => undefined,
       gameOver: (p) => set({ gameOver: { winnerId: p.winnerId, winnerName: p.winnerName } }),
       paused: (p) => set({ pause: { ...p, receivedAt: Date.now() } }),
@@ -102,14 +112,16 @@ export function createOnlineController(opts: Omit<OnlineClientOptions, "handlers
     disconnect: () => { client.disconnect(); set({ ...initial() }); },
     async createRoom(name) { const r = await client.createRoom(name); return fail(r); },
     async joinRoom(code, name) { const r = await client.joinRoom(code, name); return fail(r); },
-    async leave() { await client.leaveRoom(); set({ view: null, gameOver: null, revealed: null, lastDraw: null, pause: null, chat: [] }); },
+    async leave() { await client.leaveRoom(); set({ view: null, gameOver: null, revealed: null, lastDraw: null, pause: null, chat: [], drawSlots: [], slotsTurnId: null }); },
     async start(fill, level) { return fail(await client.startGame({ fillWithAi: fill, ...(level ? { aiDifficulty: level } : {}) })); },
-    async draw(targetId, cardIndex) {
+    async draw(targetId, choice) {
       const v = get().view;
       if (!v?.game) return "No game in progress.";
+      if (v.game.turnId !== get().slotsTurnId) return "Wait for your cards.";
       set({ pendingDraw: true });
-      // The server decides everything; we only name a target and a position, tagged for duplicate protection.
-      const r = await client.requestDraw({ targetPlayerId: targetId, cardIndex, turnId: v.game.turnId, actionId: newId() });
+      // We send ONLY an opaque slot the server minted for this turn. The client never names a
+      // card and never learns which hand index the slot resolved to.
+      const r = await client.requestDraw({ targetPlayerId: targetId, slotId: choice, turnId: v.game.turnId, actionId: newId() });
       if (!r.ok) set({ pendingDraw: false });
       return fail(r);
     },

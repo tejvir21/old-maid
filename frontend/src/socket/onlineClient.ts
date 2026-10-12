@@ -7,7 +7,9 @@ export interface OnlineHandlers {
   status(s: ConnStatus): void;
   view(v: PlayerView, cause: "room_state" | "game_started"): void;
   cardDrawn(p: { card: Card; pairFormed: boolean; pairCards: [Card, Card] | null; fromPlayerId: string }): void;
-  drawPublic(p: { actorId: string; targetId: string; cardIndex: number; pairFormed: boolean; seq: number }): void;
+  drawPublic(p: { actorId: string; targetId: string; pairFormed: boolean; seq: number }): void;
+  /** Private to the acting player: opaque slots for this turn only. */
+  drawSlots(p: { turnId: number; targets: { targetPlayerId: string; slots: string[] }[] }): void;
   pairFormed(p: { playerId: string }): void;
   gameOver(p: { winnerId: string; winnerName: string; finalCard: "joker" }): void;
   paused(p: { playerId: string; secondsLeft: number }): void;
@@ -107,6 +109,7 @@ export class OnlineClient {
     raw.on("game_started", ((v: PlayerView) => h.view(v, "game_started")) as never);
     raw.on("card_drawn", ((p: never) => h.cardDrawn(p)) as never);
     raw.on("draw_public", ((p: never) => h.drawPublic(p)) as never);
+    raw.on("draw_slots", ((p: never) => h.drawSlots(p)) as never);
     raw.on("pair_formed", ((p: never) => h.pairFormed(p)) as never);
     raw.on("game_over", ((p: never) => h.gameOver(p)) as never);
     raw.on("game_paused", ((p: never) => h.paused(p)) as never);
@@ -150,7 +153,8 @@ export class OnlineClient {
   resume() { return this.request<{ roomCode: string; playerId: string }>("resume_session"); }
   leaveRoom() { return this.request<object>("leave_room"); }
   startGame(opts: { fillWithAi?: boolean; aiDifficulty?: "easy" | "normal" | "hard" }) { return this.request<object>("start_game", opts); }
-  requestDraw(p: { targetPlayerId: string; cardIndex: number; turnId: number; actionId: string }) { return this.request<object>("request_draw", p); }
+  /** `slotId` is an opaque, server-minted, single-turn identifier — never a hand index. */
+  requestDraw(p: { targetPlayerId: string; slotId: string; turnId: number; actionId: string }) { return this.request<object>("request_draw", p); }
   chat(text: string) { return this.request<object>("chat_message", { text }); }
   emote(emote: string) { return this.request<object>("emote", { emote }); }
   rematch() { return this.request<object>("rematch"); }

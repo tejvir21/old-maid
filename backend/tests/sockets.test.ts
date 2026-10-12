@@ -16,6 +16,19 @@ async function player(): Promise<Client> {
   clients.push(c);
   return c;
 }
+
+/**
+ * Builds a well-formed `request_draw` payload using a real server-issued slot when one exists.
+ * Reads the room's (server-side) slot table so the test drives the genuine request path; if the
+ * viewer currently holds no table (wrong turn / paused), a well-formed placeholder is used so
+ * the assertion exercises the intended rejection rather than crashing.
+ */
+function slotPayload(booted: Booted, code: string, actorId: string, targetId: string, actionId: string) {
+  const s = booted.services.rooms._debugSession(code)!;
+  void actorId;
+  const slotId = booted.services.rooms._debugSlots(code)?.targets.get(targetId)?.keys().next().value as string | undefined;
+  return { targetPlayerId: targetId, slotId: slotId ?? "AAAAAAAAAAAAAAAAAAAAAAAA", turnId: s.turnId, actionId };
+}
 afterAll(() => clients.forEach((c) => c.close()));
 
 describe("socket authentication", () => {
@@ -94,15 +107,23 @@ describe("full online game over Socket.IO (3 humans)", () => {
     const acted = new Set<string>();
     for (const c of all) {
       c.sock.onAny((event: string, payload: unknown) => {
+        // Draws are driven only by the opaque slots the server issued for this turn.
+        if (event === "draw_slots") {
+          const p = payload as { turnId: number; targets: { targetPlayerId: string; slots: string[] }[] };
+          const v = c.msgs.filter((m) => m.event === "room_state" || m.event === "game_started").map((m) => m.payload as PlayerView).pop();
+          if (!v?.game || v.status !== "playing" || v.game.paused || v.game.currentPlayerId !== v.you) return;
+          if (v.game.turnId !== p.turnId) return;
+          const key = `${v.you}:${p.turnId}`;
+          if (acted.has(key)) return;
+          acted.add(key);
+          const t = p.targets[Math.floor(Math.random() * p.targets.length)]!;
+          const slot = t.slots[Math.floor(Math.random() * t.slots.length)]!;
+          c.sock.emit("request_draw", { targetPlayerId: t.targetPlayerId, slotId: slot, turnId: p.turnId, actionId: randomUUID() }, () => undefined);
+          return;
+        }
         if (event !== "room_state" && event !== "game_started") return;
         const v = payload as PlayerView;
         if (v.status !== "playing" || !v.game || v.game.paused || v.game.currentPlayerId !== v.you) return;
-        const key = `${v.you}:${v.game.turnId}`;
-        if (acted.has(key)) return;
-        acted.add(key);
-        const targets = v.players.filter((p) => p.id !== v.you && p.cardCount > 0);
-        const t = targets[Math.floor(Math.random() * targets.length)]!;
-        c.sock.emit("request_draw", { targetPlayerId: t.id, cardIndex: Math.floor(Math.random() * t.cardCount), turnId: v.game.turnId, actionId: randomUUID() }, () => undefined);
       });
     }
     expect(await p0.emit("start_game", {})).toMatchObject({ ok: true });
@@ -208,14 +229,14 @@ describe("reconnection + duplicate sockets", () => {
     // make sure it's the guest's turn: if not, host draws once from the guest.
     if (gs.game!.currentPlayerId !== u.userId) {
       const hs = (await host.wait("game_started")) as PlayerView;
-      await host.emit("request_draw", { targetPlayerId: u.userId, cardIndex: 0, turnId: hs.game!.turnId, actionId: randomUUID() });
+      await host.emit("request_draw", slotPayload(b, created.roomCode!, host.userId, u.userId, randomUUID()));
     }
     const cur = b.services.rooms._debugSession(created.roomCode!)!;
     if (cur.currentPlayerId !== u.userId) return; // game ended early – nothing to assert
     g.close();
     expect(await host.wait("game_paused")).toMatchObject({ playerId: u.userId });
     const hv = (await host.wait("room_state", (v: PlayerView) => !!v.game?.paused)) as PlayerView;
-    expect(await host.emit("request_draw", { targetPlayerId: u.userId, cardIndex: 0, turnId: hv.game!.turnId, actionId: randomUUID() })).toMatchObject({ ok: false });
+    expect(await host.emit("request_draw", slotPayload(b, created.roomCode!, host.userId, u.userId, randomUUID()))).toMatchObject({ ok: false });
     g = await connect(b.url, u.token, u.userId);
     clients.push(g);
     await host.wait("game_resumed");

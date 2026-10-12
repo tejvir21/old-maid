@@ -15,12 +15,20 @@ export interface SeatVM {
   debugHand?: Card[];
 }
 
+export interface DrawSlotsVM {
+  targetId: string;
+  /** Opaque, server-minted, single-turn. Rendered position carries no information. */
+  slots: string[];
+}
+
 export interface TableVM {
   mode: "offline" | "online";
   youId: string;
   /** You first, then clockwise turn order. */
   seats: SeatVM[];
   myHand: Card[];
+  /** Online only: the opaque slots the server issued for THIS turn. */
+  drawSlots: DrawSlotsVM[];
   currentId: string | null;
   currentName: string;
   canAct: boolean;
@@ -51,6 +59,9 @@ export function offlineVm(game: OfflineGame, reactionId: string | null, debug: b
   const withCards = seats.filter((s) => s.cardCount > 0).length;
   return {
     mode: "offline", youId: HUMAN_ID, seats: rotateToYou(seats, HUMAN_ID), myHand: game.hand(HUMAN_ID),
+    // Offline play is single-device: the local player's own engine resolves indices, so the UI
+    // uses positional selection exactly as before. No slots are needed or exposed.
+    drawSlots: [],
     currentId: cur, currentName: cur ? game.name(cur) : "", canAct: game.isHumanTurn,
     cardsRemaining: game.cardsRemaining, round: Math.floor(game.state.drawCount / Math.max(1, withCards)) + 1,
     playersWithCards: withCards, log: [...game.log], paused: null, finished: game.finished, abandoned: false,
@@ -58,8 +69,13 @@ export function offlineVm(game: OfflineGame, reactionId: string | null, debug: b
   };
 }
 
-/** Built ONLY from the server's per-viewer PlayerView – there is nothing else in the browser to leak. */
-export function onlineVm(view: PlayerView, privateLog: { id: number; text: string }[], pauseSecondsLeft: number | null): TableVM {
+/** Built ONLY from the server's per-viewer PlayerView + this client's own private slot list. */
+export function onlineVm(
+  view: PlayerView,
+  privateLog: { id: number; text: string }[],
+  pauseSecondsLeft: number | null,
+  drawSlots: DrawSlotsVM[] = [],
+): TableVM {
   const g = view.game;
   const cur = view.status === "playing" ? (g?.currentPlayerId ?? null) : null;
   const seats: SeatVM[] = view.players.map((p) => ({
@@ -74,6 +90,8 @@ export function onlineVm(view: PlayerView, privateLog: { id: number; text: strin
   const priv = privateLog.map((l) => ({ id: 1_000_000 + l.id, text: l.text, kind: "private" as const }));
   return {
     mode: "online", youId: view.you, seats: rotateToYou(seats, view.you), myHand: view.myHand,
+    // Only slots valid for the current turn are usable; anything else is dropped.
+    drawSlots: view.game ? drawSlots.filter((t) => t.slots.length > 0) : [],
     currentId: cur, currentName: name(cur), canAct: !!cur && cur === view.you && !paused,
     cardsRemaining: g?.cardsRemaining ?? 0, round: Math.floor((g?.drawCount ?? 0) / Math.max(1, withCards)) + 1,
     playersWithCards: withCards, log: [...pub, ...priv].slice(-60), paused,

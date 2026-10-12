@@ -7,7 +7,7 @@ import type { Repo } from "../offline/db";
 import { DEFAULT_SETTINGS, type OfflineGameRecord, type Settings } from "../offline/types";
 import type { SyncStatus } from "../sync/syncEngine";
 
-export const useNetStore = create<NetSnapshot>(() => ({ state: "online", suspended: false }));
+export const useNetStore = create<NetSnapshot>(() => ({ state: "online", suspended: false, failures: 0, lastOkAt: 0 }));
 
 export const useSyncStore = create<SyncStatus>(() => ({
   state: "idle", pending: 0, syncing: 0, failed: 0, done: 0, total: 0, lastSyncAt: null, lastError: null,

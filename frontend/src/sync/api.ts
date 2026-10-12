@@ -13,7 +13,20 @@ export interface ApiDeps {
   timeoutMs?: number;
 }
 
+/**
+ * True when a failure looks like the browser refusing the request rather than the network
+ * being down. Brave Shields and common ad-blockers produce `ERR_BLOCKED_BY_CLIENT` /
+ * `Failed to fetch` with no HTTP status at all; that is a *client-side block*, not a dead server.
+ */
+export function looksBlocked(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e ?? "");
+  return /blocked by client|ERR_BLOCKED_BY_CLIENT|blockedbyclient/i.test(msg);
+}
+
 interface AuthResponse { token: string; sessionId: string; user: { id: string; username: string; isGuest: boolean } }
+
+/** Result of a connectivity probe. */
+export interface ProbeOutcome { ok: boolean; blocked: boolean }
 
 /**
  * Thin HTTP client. Identity is a guest account created on first need (online only) and re-established
@@ -62,6 +75,39 @@ export class ApiClient {
       // A 503 "degraded" still means the server is reachable.
       return e instanceof ApiError;
     }
+  }
+
+  /**
+   * Connectivity probe used by the NetworkMonitor.
+   *
+   * Tries several real endpoints in order instead of trusting `/health` alone:
+   *   1. `/health`            – the cheapest liveness signal
+   *   2. `/api/config`        – the endpoint the app genuinely needs
+   *   3. `POST /api/auth/guest` – proves authenticated API traffic works end to end
+   *
+   * A 401/403/409/429 still proves the server is reachable. Only a total transport failure is
+   * "not ok", and a browser block is reported separately so the UI can say so instead of
+   * claiming the backend is down.
+   */
+  async probe(): Promise<ProbeOutcome> {
+    let blocked = false;
+    for (const attempt of [
+      () => this.raw<unknown>("GET", "/health"),
+      () => this.raw<unknown>("GET", "/api/config"),
+      () => this.raw<unknown>("POST", "/api/auth/guest"),
+    ]) {
+      try {
+        await attempt();
+        return { ok: true, blocked: false };
+      } catch (e) {
+        if (e instanceof ApiError) {
+          // The server answered. Any HTTP status (including 401/429) means it is reachable.
+          return { ok: true, blocked: false };
+        }
+        if (looksBlocked(e)) blocked = true;
+      }
+    }
+    return { ok: false, blocked };
   }
 
   /** Returns a valid access token, creating a guest account if this device has none yet. */

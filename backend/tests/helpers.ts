@@ -61,13 +61,22 @@ export async function makeManager(opts: { timing?: Partial<Timing>; seed?: numbe
   return { mgr, store, settings, emitter, scheduler };
 }
 
-/** Pick any legal move for `playerId` straight from the (debug) authoritative session. */
+/**
+ * Pick any legal move for `playerId`.
+ *
+ * Draws now travel as opaque, server-minted slots. The test peeks at the room's slot table to
+ * obtain a real one (that table is server-side state, exactly as it is in production) so the
+ * rest of the suite exercises the genuine request path rather than a shortcut.
+ */
 export function legalDraw(mgr: RoomManager, code: string, playerId: string, actionId: string) {
   const s = mgr._debugSession(code);
   if (!s) throw new Error("no session");
   const target = s.state.players.find((p) => p.id !== playerId && p.hand.length > 0);
   if (!target) throw new Error("no target");
-  return { targetPlayerId: target.id, cardIndex: 0, turnId: s.turnId, actionId };
+  const slots = mgr._debugSlots(code);
+  const slotId = slots?.targets.get(target.id)?.keys().next().value;
+  if (!slotId) throw new Error("no slot issued for the acting player");
+  return { targetPlayerId: target.id, slotId, turnId: s.turnId, actionId };
 }
 
 export const CARD_LEAK = /"isJoker"|"rank"|"suit"/;

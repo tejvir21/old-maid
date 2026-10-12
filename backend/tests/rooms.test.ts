@@ -181,13 +181,19 @@ describe("server authority + hidden information", () => {
     expect(code_(mgr.requestDraw(other, { ...legalDraw(mgr, code, other, "o1") }))).toBe("NOT_YOUR_TURN");
     expect(code_(mgr.requestDraw(cur, { ...base, actionId: "s1", targetPlayerId: cur }))).toBe("INVALID_TARGET");
     expect(code_(mgr.requestDraw(cur, { ...base, actionId: "s2", turnId: base.turnId + 5 }))).toBe("STALE_TURN");
-    expect(code_(mgr.requestDraw(cur, { ...base, actionId: "s3", cardIndex: 99 }))).toBe("BAD_REQUEST"); // schema cap
-    expect(code_(mgr.requestDraw(cur, { ...base, actionId: "s4", cardIndex: 40 }))).toBe("INVALID_CARD");
-    expect(code_(mgr.requestDraw(cur, { ...base, actionId: "s5", cardIndex: -1 }))).toBe("BAD_REQUEST");
+    // The payload no longer accepts a card index at all — a positional draw is impossible.
+    expect(code_(mgr.requestDraw(cur, { ...base, actionId: "s3", cardIndex: 99 }))).toBe("BAD_REQUEST");
+    expect(code_(mgr.requestDraw(cur, { ...base, actionId: "s4", slotId: 40 }))).toBe("BAD_REQUEST");
+    expect(code_(mgr.requestDraw(cur, { ...base, actionId: "s5", slotId: -1 }))).toBe("BAD_REQUEST");
     expect(code_(mgr.requestDraw(cur, { ...base, actionId: "s6", targetPlayerId: "ghost" }))).toBe("INVALID_TARGET");
-    expect(code_(mgr.requestDraw(cur, { ...base, actionId: "s7", cardIndex: 1.5 }))).toBe("BAD_REQUEST");
+    expect(code_(mgr.requestDraw(cur, { ...base, actionId: "s7", slotId: 1.5 }))).toBe("BAD_REQUEST");
     expect(code_(mgr.requestDraw("stranger", base))).toBe("NOT_IN_ROOM");
     expect(code_(mgr.requestDraw(cur, { nonsense: true }))).toBe("BAD_REQUEST");
+
+    // Forged / unknown slot ids are refused rather than silently mapped to some card.
+    expect(code_(mgr.requestDraw(cur, { ...base, actionId: "f1", slotId: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" }))).toBe("INVALID_SLOT");
+    expect(code_(mgr.requestDraw(cur, { ...base, actionId: "f2", slotId: "not-a-slot!!" }))).toBe("BAD_REQUEST"); // charset
+    expect(code_(mgr.requestDraw(cur, { ...base, actionId: "f3", slotId: "short" }))).toBe("BAD_REQUEST"); // too short
 
     expect(code_(mgr.requestDraw(cur, { ...base, actionId: "dup" }))).toBe("ok");
     expect(code_(mgr.requestDraw(cur, { ...base, actionId: "dup" }))).toBe("DUPLICATE_ACTION");
@@ -197,7 +203,7 @@ describe("server authority + hidden information", () => {
 
   it("cannot draw before the game starts or after it ended", async () => {
     const { mgr, ids } = await lobby(2);
-    expect(mgr.requestDraw(ids[0]!, { targetPlayerId: ids[1], cardIndex: 0, turnId: 1, actionId: "a" })).toMatchObject({ ok: false });
+    expect(mgr.requestDraw(ids[0]!, { targetPlayerId: ids[1], slotId: "AAAAAAAAAAAAAAAA", turnId: 1, actionId: "a" })).toMatchObject({ ok: false });
   });
 });
 

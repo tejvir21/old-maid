@@ -23,7 +23,7 @@ import { OnlineRoom } from "./pages/OnlineRoom";
 import { Rules } from "./pages/Rules";
 import { Settings } from "./pages/Settings";
 import { Stats } from "./pages/Stats";
-import { configureSound } from "./sound/sound";
+import { configureSound, unlockAudio } from "./sound/sound";
 import { useSettingsStore } from "./store/ui";
 
 function NotFound() {
@@ -47,11 +47,22 @@ export function App() {
     configureSound({ sound: settings.sound, music: settings.music });
   }, [settings.theme, settings.animations, settings.sound, settings.music]);
 
-  // Browsers only allow audio after a gesture; make sure music can start on the first interaction.
+  // Browsers only allow audio after a gesture; unlock it on the first real interaction.
+  // Registering the listener up front also means music requested in settings works.
   useEffect(() => {
-    const kick = () => configureSound({ sound: settings.sound, music: settings.music });
-    window.addEventListener("pointerdown", kick, { once: true });
-    return () => window.removeEventListener("pointerdown", kick);
+    const kick = () => {
+      configureSound({ sound: settings.sound, music: settings.music });
+      unlockAudio();
+    };
+    const opts = { once: true, passive: true } as const;
+    window.addEventListener("pointerdown", kick, opts);
+    window.addEventListener("keydown", kick, opts);
+    window.addEventListener("touchstart", kick, opts);
+    return () => {
+      window.removeEventListener("pointerdown", kick);
+      window.removeEventListener("keydown", kick);
+      window.removeEventListener("touchstart", kick);
+    };
   }, [settings.sound, settings.music]);
 
   useEffect(() => { svc.start(); return () => svc.stop(); }, [svc]);

@@ -227,7 +227,11 @@ describe("network gate: NO requests while an offline game is active", () => {
     expect((await engine.run()).state).toBe("offline");
     expect(proxy.hits).toBe(hits);
     online = true;
+    // A single failed probe must NOT strand the app offline; the threshold is 2.
     const n2 = new NetworkMonitor({ isBrowserOnline: () => online, probe: async () => false, scheduler: sched });
+    await n2.check();
+    expect(n2.snapshot.state).not.toBe("unreachable");
+    expect(n2.snapshot.failures).toBe(1);
     await n2.check();
     expect(n2.snapshot.state).toBe("unreachable");
   });
@@ -241,6 +245,9 @@ describe("network gate: NO requests while an offline game is active", () => {
     net.onReconnect(cb);
     net.start();
     await new Promise((r) => setTimeout(r, 10));
+    expect(net.snapshot.state).not.toBe("unreachable"); // one failure tolerated
+    // Two consecutive failures do declare it unreachable.
+    await net.check();
     expect(net.snapshot.state).toBe("unreachable");
     reachable = true;
     up();

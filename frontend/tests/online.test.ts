@@ -34,17 +34,18 @@ function until(ctl: OnlineController, pred: (s: OnlineState) => boolean, ms = 80
   });
 }
 
-/** Auto-play: whenever it's my turn, ask the server for a random legal draw. */
+/** Auto-play: whenever it's my turn, pick one of the server-issued opaque slots. */
 function autoplay(u: U) {
   const acted = new Set<number>();
   return u.ctl.store.subscribe((s) => {
     const v = s.view;
     if (!v || v.status !== "playing" || !v.game || v.game.paused || v.game.currentPlayerId !== v.you || s.pendingDraw) return;
     if (acted.has(v.game.turnId)) return;
+    if (s.slotsTurnId !== v.game.turnId || s.drawSlots.length === 0) return; // slots not issued yet
     acted.add(v.game.turnId);
-    const targets = v.players.filter((p) => p.id !== v.you && p.cardCount > 0);
-    const t = targets[Math.floor(Math.random() * targets.length)]!;
-    void u.ctl.draw(t.id, Math.floor(Math.random() * t.cardCount));
+    const t = s.drawSlots[Math.floor(Math.random() * s.drawSlots.length)]!;
+    const slot = t.slots[Math.floor(Math.random() * t.slots.length)]!;
+    void u.ctl.draw(t.targetId, slot);
   });
 }
 

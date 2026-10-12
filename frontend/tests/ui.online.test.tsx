@@ -21,8 +21,15 @@ function view(over: Partial<PlayerView> = {}): PlayerView {
     events: [{ seq: 1, type: "card_drawn", text: "Akira drew a card from Ken." }], ...over,
   };
 }
-const open = (v: PlayerView, conn: "connected" | "reconnecting" = "connected") =>
-  mountApp("/online/room", {}, (svc) => svc.online.store.setState({ conn, view: v }));
+const open = (v: PlayerView, conn: "connected" | "reconnecting" = "connected", slots?: { targetId: string; slots: string[] }[]) =>
+  mountApp("/online/room", {}, (svc) => {
+    svc.online.store.setState({
+      conn,
+      view: v,
+      drawSlots: slots ?? [],
+      ...(slots && v.game ? { slotsTurnId: v.game.turnId } : {}),
+    });
+  });
 const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 20)); });
 
 describe("online table renders only what the server permits", () => {
@@ -38,8 +45,10 @@ describe("online table renders only what the server permits", () => {
     expect(screen.getByLabelText("Your hand")).toBeTruthy();
   });
 
-  it("drawing sends only {target, position, turnId, actionId} and then waits for the server", async () => {
-    const { svc } = await open(view());
+  it("drawing sends only {target, opaque slot, turnId, actionId} — never a card index", async () => {
+    const { svc } = await open(view(), "connected", [
+      { targetId: "a", slots: ["slot-one-aaaa", "slot-two-bbbb", "slot-three-cccc", "slot-four-dddd", "slot-five-eeee"] },
+    ]);
     const spy = vi.fn().mockResolvedValue({ ok: true });
     svc.online.client.requestDraw = spy;
     fireEvent.click(screen.getAllByRole("button", { name: /^draw from akira, 5 cards/i })[0]!);
@@ -47,9 +56,17 @@ describe("online table renders only what the server permits", () => {
     const cards = within(dlg).getAllByRole("button", { name: /^card \d of 5$/i });
     expect(cards).toHaveLength(5);
     expect(within(dlg).queryAllByRole("img", { name: /of (hearts|spades|clubs|diamonds)/i })).toHaveLength(0); // face-down only
+    // No element exposes a card id or a hand index for an opponent's card.
+    expect(dlg.querySelector("[data-card]")).toBeNull();
+    expect(dlg.innerHTML).not.toMatch(/cardIndex|handIndex/);
+
     fireEvent.click(cards[2]!);
     await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
-    expect(spy.mock.calls[0]![0]).toEqual({ targetPlayerId: "a", cardIndex: 2, turnId: 7, actionId: expect.any(String) });
+    const sent = spy.mock.calls[0]![0] as Record<string, unknown>;
+    expect(sent).toEqual({ targetPlayerId: "a", slotId: "slot-three-cccc", turnId: 7, actionId: expect.any(String) });
+    // The decisive assertion: the wire payload has no notion of position at all.
+    expect(sent).not.toHaveProperty("cardIndex");
+    expect(Object.keys(sent).sort()).toEqual(["actionId", "slotId", "targetPlayerId", "turnId"]);
     // while the request is in flight the UI offers no further draws (duplicate-click protection)
     expect(svc.online.store.getState().pendingDraw).toBe(true);
     await settle();

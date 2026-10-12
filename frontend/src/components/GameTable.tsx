@@ -148,8 +148,13 @@ export function GameTable({ vm, reduce, busy, onDraw, header, overlays, banner }
   /**
    * Choices offered for `targetSeat`.
    *
-   * Online: the server's opaque slots for this turn. Offline: positional, because the whole game
-   * is local to this device and there is nothing to protect.
+   * Online: the server's opaque slots for this turn, in the server's shuffled order.
+   * Offline: positional, because the whole game is local to this device and there is nothing
+   * to protect.
+   *
+   * Online MUST never fall back to positional indices. Doing so would render opponent cards in
+   * a stable order and let a player track the Joker by position — the exact leak the slot
+   * protocol prevents. If the server has not issued slots yet, we show nothing and wait.
    */
   const choicesFor = (seat: SeatVM): string[] => {
     if (vm.mode === "online") return vm.drawSlots.find((t) => t.targetId === seat.id)?.slots ?? [];

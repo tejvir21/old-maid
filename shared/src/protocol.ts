@@ -20,6 +20,18 @@ export const roomCodeSchema = z
   .refine((c) => [...c].every((ch) => ROOM_CODE_ALPHABET.includes(ch)), "Invalid room code");
 
 /**
+ * Wire-protocol version.
+ *
+ * Bump this whenever the client/server contract changes incompatibly (a renamed or removed
+ * socket field, a changed payload shape). The server publishes it on `/api/config`; the client
+ * compares it on connect and refuses to play rather than silently issuing requests the server
+ * will reject. This turns a confusing mid-game error into one clear "reload to update" message.
+ *
+ * v2 = opaque per-turn draw slots replaced positional `cardIndex`.
+ */
+export const PROTOCOL_VERSION = 2;
+
+/**
  * A draw selects an OPAQUE SLOT, never a hand index.
  *
  * The slot is minted server-side for one (viewer, target, turn) and resolved back to a real

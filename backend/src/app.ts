@@ -2,6 +2,7 @@ import cors from "cors";
 import express, { type Express } from "express";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
+import { PROTOCOL_VERSION } from "@old-maid/shared";
 import { asyncHandler, errorHandler, requireAuth } from "./routes/middleware.js";
 import { authRouter } from "./routes/auth.js";
 import { adminRouter, reportRouter } from "./routes/admin.js";
@@ -51,6 +52,9 @@ export function createApp(s: Services, opts: AppOptions = {}): Express {
     const game = s.settings.getGame();
     res.json({
       success: true,
+      // Lets a stale client detect that it is out of date and say so, instead of issuing
+      // requests the server will reject with an opaque validation error.
+      protocolVersion: PROTOCOL_VERSION,
       appName: sys.applicationName,
       maintenance: { enabled: sys.maintenanceMode, message: sys.maintenanceMessage },
       features: s.settings.getFlags(),

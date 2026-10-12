@@ -62,6 +62,8 @@ export class AppServices {
     });
     this.online = createOnlineController({
       url: opts.socketUrl, getToken: (force) => this.api.ensureToken(force),
+      // Frontend and backend deploy independently; refuse to play against a mismatched server.
+      checkProtocol: () => this.api.isProtocolSkewed(),
       ...(opts.transports ? { transports: opts.transports } : {}),
     });
     if (opts.onNet) this.net.subscribe(opts.onNet);

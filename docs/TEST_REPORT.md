@@ -11,9 +11,9 @@
 | Suite | Test files | Passed | Failed | Skipped | Not run |
 |---|---:|---:|---:|---:|---:|
 | `@old-maid/shared` (engine, rules, AI, RBAC, **termination**) | 3 | **66** | 0 | 0 | 0 |
-| `backend` (rooms, sockets, HTTP, store contract, admin security, **slots**, **privacy**) | 9 + 1 | **150** | 0 | **18** | 0 |
-| `frontend` (offline, online, sync, UI, admin UI, **connectivity**) | 8 | **88** | 0 | 0 | 0 |
-| **Total** | **20** | **304** | **0** | **18** | **0** |
+| `backend` (rooms, sockets, HTTP, store contract, admin security, **slots**, **privacy**, **incident**) | 11 | **163** | 0 | **18** | 0 |
+| `frontend` (offline, online, sync, UI, admin UI, **connectivity**, **slot order**, **skew**) | 10 | **103** | 0 | 0 | 0 |
+| **Total** | **24** | **332** | **0** | **18** | **0** |
 
 ### 1a. MongoDB integration
 
@@ -22,7 +22,7 @@ cd backend && npx tsx scripts/withMongo.ts
 ```
 
 ```
-Tests  168 passed (168)
+Tests  181 passed (181)
 ```
 
 The 18 tests skipped without a database are the `MongoStore` halves of the store contract and the

@@ -120,6 +120,7 @@ function OnlineGame({ ctl }: { ctl: OnlineController }) {
   const pending = useStore(ctl.store, (s) => s.pendingDraw);
   const error = useStore(ctl.store, (s) => s.error);
   const notices = useStore(ctl.store, (s) => s.notices);
+  const skewed = useStore(ctl.store, (s) => s.protocolSkewed);
   const drawSlots = useStore(ctl.store, (s) => s.drawSlots);
   const slotsTurnId = useStore(ctl.store, (s) => s.slotsTurnId);
   const [privateLog, setPrivateLog] = useState<{ id: number; text: string }[]>([]);
@@ -160,7 +161,16 @@ function OnlineGame({ ctl }: { ctl: OnlineController }) {
       }
       banner={
         <div className="relative z-20 space-y-1 px-3">
-          {conn !== "connected" && <p role="alert" className="border border-ember bg-blood/30 px-3 py-2 text-center text-xs uppercase tracking-[0.25em]">{conn === "reconnecting" ? "Connection lost — reconnecting…" : conn === "connecting" ? "Connecting…" : "Disconnected"}</p>}
+          {skewed && (
+            <div role="alert" className="border border-ember bg-blood/30 px-3 py-2 text-center text-xs uppercase tracking-[0.25em]">
+              <p>This app is out of date with the server.</p>
+              <p className="mt-1 normal-case tracking-normal text-dim">
+                Online play needs the latest version so your draws are private. Reload the page to update.
+              </p>
+              <button type="button" className="btn mt-2 !min-h-[40px]" onClick={() => location.reload()}>Reload</button>
+            </div>
+          )}
+          {conn !== "connected" && !skewed && <p role="alert" className="border border-ember bg-blood/30 px-3 py-2 text-center text-xs uppercase tracking-[0.25em]">{conn === "reconnecting" ? "Connection lost — reconnecting…" : conn === "connecting" ? "Connecting…" : "Disconnected"}</p>}
           {vm.paused && (
             <div role="alert" className="border border-ember/60 bg-ink/90 px-3 py-2 text-center text-xs uppercase tracking-[0.25em]">
               <p>Waiting for {vm.paused.name} to reconnect… {vm.paused.secondsLeft > 0 ? <span className="tabular-nums text-ember">{vm.paused.secondsLeft}</span> : null}</p>

@@ -28,12 +28,20 @@ export interface OnlineState {
    */
   drawSlots: { targetId: string; slots: string[] }[];
   slotsTurnId: number | null;
+  /**
+   * True when the server speaks a different wire protocol than this build.
+   *
+   * Frontend and backend deploy independently, so a browser can hold a build from a different
+   * release. When that happens draws would fail with an opaque validation error and the UI
+   * would have no slots to render, so we block play and ask the user to reload instead.
+   */
+  protocolSkewed: boolean;
 }
 
 const initial = (): OnlineState => ({
   conn: "disconnected", view: null, revealed: null, lastDraw: null, pendingDraw: false, gameOver: null,
   chat: [], emotes: [], notices: [], error: null, authFailed: false, pause: null,
-  drawSlots: [], slotsTurnId: null,
+  drawSlots: [], slotsTurnId: null, protocolSkewed: false,
 });
 
 export type OnlineStore = StoreApi<OnlineState>;
@@ -108,13 +116,33 @@ export function createOnlineController(opts: Omit<OnlineClientOptions, "handlers
 
   return {
     store, client,
-    connect: () => client.connect(),
+    /**
+     * Checks the server's protocol version before connecting.
+     *
+     * `checkProtocol` is optional so tests and the offline-only path can skip it; when absent
+     * we simply connect. A skew is recorded in state and surfaced to the user, rather than
+     * letting them discover it as an unexplained "Invalid draw request." mid-game.
+     */
+    connect: () => {
+      const check = opts.checkProtocol?.() ?? Promise.resolve(false);
+      void check.then((skewed) => {
+        set({ protocolSkewed: skewed });
+        if (skewed) {
+          note("This app is out of date with the server. Reload the page to play online.", "PROTOCOL_SKEW");
+          return;
+        }
+        client.connect();
+      });
+    },
     disconnect: () => { client.disconnect(); set({ ...initial() }); },
     async createRoom(name) { const r = await client.createRoom(name); return fail(r); },
     async joinRoom(code, name) { const r = await client.joinRoom(code, name); return fail(r); },
     async leave() { await client.leaveRoom(); set({ view: null, gameOver: null, revealed: null, lastDraw: null, pause: null, chat: [], drawSlots: [], slotsTurnId: null }); },
     async start(fill, level) { return fail(await client.startGame({ fillWithAi: fill, ...(level ? { aiDifficulty: level } : {}) })); },
     async draw(targetId, choice) {
+      // Skew is checked first: it is the root cause and the most useful thing to report,
+      // regardless of what view state happens to be present.
+      if (get().protocolSkewed) return "Reload the page to play online.";
       const v = get().view;
       if (!v?.game) return "No game in progress.";
       if (v.game.turnId !== get().slotsTurnId) return "Wait for your cards.";

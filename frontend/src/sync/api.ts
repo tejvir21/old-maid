@@ -1,4 +1,4 @@
-import type { OfflineGamePayload, StatsSummary, SyncItemResult } from "@old-maid/shared";
+import { PROTOCOL_VERSION, type OfflineGamePayload, type StatsSummary, type SyncItemResult } from "@old-maid/shared";
 import type { Repo } from "../offline/db";
 
 export class NetworkError extends Error {}
@@ -75,6 +75,33 @@ export class ApiClient {
       // A 503 "degraded" still means the server is reachable.
       return e instanceof ApiError;
     }
+  }
+
+  /**
+   * Reads the server's wire-protocol version.
+   *
+   * Deploys are independent (Vercel frontend, Render backend), so a client can be running
+   * against a server from a different release. When that happens every draw fails with an
+   * opaque `Invalid draw request.` and the UI would fall back to rendering opponent cards by
+   * position — which is precisely the leak the slot protocol exists to prevent.
+   *
+   * Comparing versions up front lets us refuse to play and say "reload to update" instead.
+   * Returns `null` when the server is unreachable or predates the field, so a network problem
+   * is never misreported as a version problem.
+   */
+  async serverProtocolVersion(): Promise<number | null> {
+    try {
+      const cfg = await this.raw<{ protocolVersion?: unknown }>("GET", "/api/config");
+      return typeof cfg.protocolVersion === "number" ? cfg.protocolVersion : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** True when the server speaks a different wire protocol than this build expects. */
+  async isProtocolSkewed(): Promise<boolean> {
+    const v = await this.serverProtocolVersion();
+    return v !== null && v !== PROTOCOL_VERSION;
   }
 
   /**

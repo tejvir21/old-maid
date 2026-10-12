@@ -28,6 +28,11 @@ export interface OnlineClientOptions {
   handlers: OnlineHandlers;
   ioImpl?: typeof io;
   transports?: string[];
+  /**
+   * Optional pre-connect protocol check. Resolves true when the server speaks a different
+   * wire protocol than this build, in which case we do not connect and ask for a reload.
+   */
+  checkProtocol?: () => Promise<boolean>;
 }
 
 type AckFn<T> = (r: Ack<T>) => void;

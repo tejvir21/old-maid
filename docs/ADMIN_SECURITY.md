@@ -166,12 +166,33 @@ server resolves it to a real hand index in private.
 | Out of turn rejected | Checked before slot resolution, so nothing about slot validity leaks |
 | Cleared at game over | `room.slots = null` in `finishGame`, `finishAbandoned`, rematch and close |
 | `draw_public` carries no index | The field was removed from the public event payload |
+| **Order always changes** | `shuffleIndices(n, rand, previous)` retries up to `SHUFFLE_ATTEMPTS` and falls back to a rotation, so a turn never reproduces the previous permutation |
 
-The UI keys face-down choices by slot id (not index, not card id), and `framer-motion` animates
-the reshuffle so a card visibly moves between turns.
+### Why "fresh ids" is not the same as "position changed"
 
-Covered by `backend/tests/drawSlots.test.ts` (16) and
-`backend/tests/privacy.slots.e2e.test.ts` (8, asserting against real serialised socket payloads).
+Fresh opaque ids are necessary but **not sufficient**. The leak only closes when the
+*permutation* differs, because that is what decides whether screen position 0 points at the same
+physical card this turn as last turn. A uniform Fisher–Yates reproduces the previous order with
+probability `1/n!` — for a player holding **two** cards that is **1/2**, so roughly half of all
+two-card turns would leave the layout visually identical and position still identifying a card.
+
+`shuffleIndices` therefore takes the previous order, retries a bounded number of times, and
+falls back to a rotate-by-one derangement. This affects only the opaque presentation order; the
+server's real hand order is never modified. `Room.lastSlotOrder` deliberately **survives** a turn
+change (that is when the guarantee is needed) and is cleared on game over, abandon, rematch and
+room close.
+
+Covered by `backend/tests/drawSlots.test.ts` (16), `backend/tests/slotShuffle.test.ts` (9),
+`backend/tests/privacy.slots.e2e.test.ts` (8), `frontend/tests/ui.slotOrder.test.tsx` (8,
+rendered DOM order) and `frontend/tests/e2e.slotOrder.test.ts` (3, live server → store).
+
+### The decorative opponent fan
+
+`OpponentFan` renders `Array.from({length: min(n, 8)})` identical, `aria-hidden` card backs with
+`key={i}`. This is a **count** display, not the selectable list, and it is not shuffled
+deliberately: every element is an indistinguishable back carrying no data, so there is nothing to
+track and nothing to gain from reshuffling it. The privacy-critical list is the draw chooser, which
+renders strictly in server-slot order.
 
 **Offline play is unaffected**: it is single-device, so the local engine resolves positions
 directly and there is nothing to protect.

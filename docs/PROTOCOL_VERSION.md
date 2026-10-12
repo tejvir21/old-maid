@@ -74,6 +74,41 @@ ever existed in any commit of this repository**. In addition, every asset URL re
 | `VITE_API_URL` (Vercel) | `https://<render-host>` |
 | `VITE_SOCKET_URL` (Vercel) | the same Render host |
 
+## Debugging opponent-card ordering
+
+Six stages decide whether a reshuffle is visible. Each is logged with **opaque slot ids, counts and
+turn numbers only** — never a card identity, rank, suit or hand index.
+
+Backend:
+
+```bash
+SLOT_DEBUG=1 npm start -w backend
+```
+
+Browser console, then reload:
+
+```js
+localStorage.setItem("SLOT_DEBUG", "1")
+```
+
+| Stage | Where | Log |
+|---|---|---|
+| 1 server generates a permutation | `roomManager.issueDrawSlots` | `[slots] built` |
+| 2 server sends it to that viewer only | `roomManager.issueDrawSlots` | `[slots] built` (includes viewer) |
+| 3 client receives the event | `onlineStore` `drawSlots` handler | `[slots] recv` |
+| 4 client state updated | `onlineStore` `drawSlots` handler | `[slots] store` |
+| 5 React renders that order | `GameTable.choicesFor` | `[slots] render` |
+| 6 clicking sends that slot | `onlineStore.draw` | `[slots] send` |
+
+`order` is the comma-joined short form of the opaque slot ids **in render order**.
+
+- `recv`/`store`/`render` agree but the order never changes between turns → the shuffle is
+  repeating a permutation.
+- `render` changes but the cards do not move → a stale bundle is being served; check the
+  deployment steps above.
+
+Clear with `localStorage.removeItem("SLOT_DEBUG")`.
+
 ## Post-deploy smoke test
 
 Frontend and backend must be on the **same** protocol version:

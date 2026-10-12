@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNod
 import { tensionLine, type SeatVM, type TableVM } from "../game/tableVm";
 import { Avatar } from "./Avatar";
 import { CardBack, CardFace } from "./Card";
+import { slotDebug, shortSlotIds } from "../sync/slotDebug";
 import { EventLog } from "./EventLog";
 import { PlayerHand } from "./PlayerHand";
 
@@ -157,7 +158,12 @@ export function GameTable({ vm, reduce, busy, onDraw, header, overlays, banner }
    * protocol prevents. If the server has not issued slots yet, we show nothing and wait.
    */
   const choicesFor = (seat: SeatVM): string[] => {
-    if (vm.mode === "online") return vm.drawSlots.find((t) => t.targetId === seat.id)?.slots ?? [];
+    if (vm.mode === "online") {
+      const order = vm.drawSlots.find((t) => t.targetId === seat.id)?.slots ?? [];
+      // Stage 5: the exact order React is about to render for this opponent.
+      slotDebug("render", { seat: seat.name, count: order.length, order: shortSlotIds(order) });
+      return order;
+    }
     return Array.from({ length: seat.cardCount }, (_, i) => String(i));
   };
 

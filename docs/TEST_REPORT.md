@@ -11,9 +11,9 @@
 | Suite | Test files | Passed | Failed | Skipped | Not run |
 |---|---:|---:|---:|---:|---:|
 | `@old-maid/shared` (engine, rules, AI, RBAC, **termination**) | 3 | **66** | 0 | 0 | 0 |
-| `backend` (rooms, sockets, HTTP, store contract, admin security, **slots**, **privacy**, **incident**) | 11 | **163** | 0 | **18** | 0 |
-| `frontend` (offline, online, sync, UI, admin UI, **connectivity**, **slot order**, **skew**) | 10 | **103** | 0 | 0 | 0 |
-| **Total** | **24** | **332** | **0** | **18** | **0** |
+| `backend` (rooms, sockets, HTTP, store contract, admin security, **slots**, **shuffle**, **privacy**, **incident**) | 12 | **172** | 0 | **18** | 0 |
+| `frontend` (offline, online, sync, UI, admin UI, **connectivity**, **slot order**, **skew**, **e2e order**) | 11 | **107** | 0 | 0 | 0 |
+| **Total** | **26** | **345** | **0** | **18** | **0** |
 
 ### 1a. MongoDB integration
 
@@ -22,7 +22,7 @@ cd backend && npx tsx scripts/withMongo.ts
 ```
 
 ```
-Tests  181 passed (181)
+Tests  190 passed (190)
 ```
 
 The 18 tests skipped without a database are the `MongoStore` halves of the store contract and the
@@ -33,7 +33,7 @@ production guest -> socket -> room flow. They are **skipped, never reported as p
 | Issue | Tests |
 |---|---|
 | 1 - Brave / blocked requests | `frontend/tests/net.blocked.test.ts` (16): block classification, layered probe fallback, failure threshold, bounded backoff, no concurrent probe stacking, session preserved, no Shields bypass |
-| 2 - Joker position tracking | `backend/tests/drawSlots.test.ts` (16) + `backend/tests/privacy.slots.e2e.test.ts` (8, real socket payloads) + `frontend/tests/ui.online.test.tsx` ("never a card index") |
+| 2 - Joker position tracking | `backend/tests/drawSlots.test.ts` (16) + `backend/tests/slotShuffle.test.ts` (9, permutation never repeats) + `backend/tests/privacy.slots.e2e.test.ts` (8) + `frontend/tests/ui.slotOrder.test.tsx` (8, rendered order) + `frontend/tests/e2e.slotOrder.test.ts` (3, live server -> store) |
 | 3 - game termination | `shared/tests/termination.test.ts` (19): 2-7 players, every AI difficulty x25 seeds, no draw after finish, replay refused, empty hands, degenerate state, card conservation |
 ## 2. Build and typecheck
 

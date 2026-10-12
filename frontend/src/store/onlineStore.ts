@@ -2,6 +2,7 @@ import { createStore, type StoreApi } from "zustand/vanilla";
 import type { Card, ChatMessagePayload, PlayerView } from "@old-maid/shared";
 import { newId } from "../offline/ids";
 import { OnlineClient, type ConnStatus, type OnlineClientOptions } from "../socket/onlineClient";
+import { slotDebug, shortSlotIds } from "../sync/slotDebug";
 
 export interface RevealedCard { card: Card; pairFormed: boolean; pairCards: [Card, Card] | null; fromPlayerId: string; at: number }
 /** Public draw notice. Carries NO card identity and NO hand index, by design. */
@@ -91,7 +92,13 @@ export function createOnlineController(opts: Omit<OnlineClientOptions, "handlers
       cardDrawn: (p) => set({ revealed: { ...p, at: Date.now() }, pendingDraw: false, drawSlots: [], slotsTurnId: null }),
       drawPublic: (lastDraw) => set({ lastDraw }),
       // Slots are single-turn: they are dropped the instant the turn moves on.
-      drawSlots: (p) => set({ drawSlots: p.targets.map((t) => ({ targetId: t.targetPlayerId, slots: t.slots })), slotsTurnId: p.turnId }),
+      // Stage 3+4: event received, then state replaced with the new permutation.
+      drawSlots: (p) => {
+        slotDebug("recv", { turnId: p.turnId, targets: p.targets.map((t) => ({ target: t.targetPlayerId, order: shortSlotIds(t.slots) })) });
+        const next = p.targets.map((t) => ({ targetId: t.targetPlayerId, slots: t.slots }));
+        slotDebug("store", { turnId: p.turnId, targets: next.map((t) => ({ target: t.targetId, order: shortSlotIds(t.slots) })) });
+        set({ drawSlots: next, slotsTurnId: p.turnId });
+      },
       pairFormed: () => undefined,
       gameOver: (p) => set({ gameOver: { winnerId: p.winnerId, winnerName: p.winnerName } }),
       paused: (p) => set({ pause: { ...p, receivedAt: Date.now() } }),
@@ -149,6 +156,8 @@ export function createOnlineController(opts: Omit<OnlineClientOptions, "handlers
       set({ pendingDraw: true });
       // We send ONLY an opaque slot the server minted for this turn. The client never names a
       // card and never learns which hand index the slot resolved to.
+      // Stage 6: the slot actually put on the wire for the clicked card.
+      slotDebug("send", { turnId: v.game.turnId, target: targetId, slot: choice });
       const r = await client.requestDraw({ targetPlayerId: targetId, slotId: choice, turnId: v.game.turnId, actionId: newId() });
       if (!r.ok) set({ pendingDraw: false });
       return fail(r);

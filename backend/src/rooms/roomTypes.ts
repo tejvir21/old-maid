@@ -43,6 +43,12 @@ export interface Room {
    * change so it can never be replayed or reused across turns.
    */
   slots: SlotTable | null;
+  /**
+   * The presentation permutation last shown to this room's viewer, per target.
+   * Used only to guarantee the next turn renders a DIFFERENT arrangement; it holds indices into
+   * the server-side slot table and is never sent to any client.
+   */
+  lastSlotOrder: Map<string, readonly number[]> | null;
   timers: { turn: unknown; ai: unknown; reconnect: Map<string, unknown> };
 }
 

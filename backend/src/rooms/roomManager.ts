@@ -206,7 +206,7 @@ export class RoomManager {
       code: this.genCode(), hostId: playerId, status: "waiting",
       players: [{ id: playerId, name: n.name, isAi: false, connected: true, disconnectedAt: null, timedOut: false, left: false, joinedAt: now }],
       maxPlayers: this.d.settings.getGame().maxPlayers, createdAt: now, startedAt: null, finishedAt: null, idleSince: null,
-      session: null, result: null, pausedFor: null, locked: false, slots: null,
+      session: null, result: null, pausedFor: null, locked: false, slots: null, lastSlotOrder: null,
       timers: { turn: null, ai: null, reconnect: new Map() },
     };
     this.rooms.set(room.code, room);
@@ -488,8 +488,29 @@ export class RoomManager {
       turnId: s.turnId,
       targets: targets.map((t) => ({ playerId: t.id, cardCount: s.cardCount(t.id) })),
       rand: this.rng,
+      // Guarantees the newly displayed order differs from the one this viewer last saw, so a
+      // screen position never keeps pointing at the same physical card across turns.
+      previous: room.lastSlotOrder ?? undefined,
     });
     room.slots = table;
+    // Remember the permutation actually emitted, so the next turn can avoid reproducing it.
+    // Stages 1+2: permutation generated, then sent to exactly this viewer.
+    // Logs OPAQUE ids, counts and turn numbers only - never a card identity or hand index.
+    if (process.env["SLOT_DEBUG"] === "1") {
+      this.d.log.info("slots built", {
+        room: room.code, viewer: playerId, turn: s.turnId,
+        targets: payload.targets.map((t) => ({ target: t.targetPlayerId, order: t.slots.map((x) => x.slice(0, 6)).join(",") })),
+      });
+    }
+    room.lastSlotOrder = new Map(
+      [...table.targets].map(([targetId, m]) => {
+        const idx = [...m.entries()].map(([slotId, i]) => {
+          const pos = payload.targets.find((x) => x.targetPlayerId === targetId)?.slots.indexOf(slotId) ?? -1;
+          return [pos, i] as const;
+        }).filter(([pos]) => pos >= 0).sort((a, b) => a[0] - b[0]).map(([, i]) => i);
+        return [targetId, idx] as const;
+      }),
+    );
     this.d.emitter.emit(playerId, "draw_slots", payload);
   }
 
@@ -503,6 +524,8 @@ export class RoomManager {
   /** Invalidates slots and re-mints them for whoever is now on turn. */
   private refreshTurnSlots(room: Room): void {
     room.slots = null;
+    // NOTE: `lastSlotOrder` deliberately SURVIVES the turn change - it exists so the newly
+    // minted order differs from the one just displayed. It is only cleared at teardown.
     const s = room.session;
     if (!s || s.finished) return;
     this.issueDrawSlots(room, s.currentPlayerId);
@@ -605,6 +628,7 @@ export class RoomManager {
     room.finishedAt = this.now();
     room.pausedFor = null;
     room.slots = null; // no slot may outlive the game
+    room.lastSlotOrder = null;
     const winnerId = s.winnerId;
     room.result = { winnerId, abandoned: false };
     const winner = winnerId ? this.player(room, winnerId) : undefined;
@@ -633,6 +657,7 @@ export class RoomManager {
     room.finishedAt = this.now();
     room.pausedFor = null;
     room.slots = null;
+    room.lastSlotOrder = null;
     room.result = { winnerId: null, abandoned: true };
     this.emitRoom(room, "server_notice", { message: "The match was ended without a winner." });
     this.broadcastState(room);
@@ -667,7 +692,7 @@ export class RoomManager {
         if (!p.isAi) this.playerRoom.delete(p.id);
       }
     }
-    room.status = "waiting"; room.session = null; room.result = null; room.pausedFor = null; room.slots = null;
+    room.status = "waiting"; room.session = null; room.result = null; room.pausedFor = null; room.slots = null; room.lastSlotOrder = null;
     room.startedAt = null; room.finishedAt = null;
     this.persist("room-rematch", this.d.store.rooms.upsert(this.roomRecord(room, "waiting")));
     this.broadcastState(room);

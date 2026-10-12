@@ -193,7 +193,9 @@ describe("public socket payloads leak nothing", () => {
     const { a, b: bC, code } = await twoHumanRoom();
     const { acting } = await currentTurn(code, a, bC);
     const idle = acting === a ? bC : a;
-    expect(latestSlots(acting)).not.toBeNull();
+    // Wait for the acting player's slots to actually arrive before asserting the asymmetry.
+    await slotsForTurn(code, acting, idle.userId, 8000);
+    expect(latestSlots(acting), "acting player receives slots").not.toBeNull();
     expect(idle.msgs.filter((m) => m.event === "draw_slots")).toHaveLength(0);
   }, 30_000);
 });

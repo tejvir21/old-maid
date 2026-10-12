@@ -1,20 +1,19 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { Card, PlayerView } from "@old-maid/shared";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import type { Card } from "@old-maid/shared";
 import { GameTable } from "../src/components/GameTable";
 import type { TableVM } from "../src/game/tableVm";
 
 /**
- * These tests assert the ACTUAL RENDERED ORDER of the opponent's face-down cards.
+ * These tests assert the ACTUAL RENDERED ORDER of the opponent's selectable face-down cards.
  *
  * Asserting that slot id strings changed would pass even if the UI ignored them and kept
- * rendering a fixed positional list - which is exactly the production bug. So each test reads
- * the DOM order of the rendered card buttons and compares it against the server's order.
+ * rendering a fixed positional list - which is exactly the production bug. Each test clicks a
+ * specific rendered position and asserts the slot id that position now sends.
  */
 
 const c = (rank: string, suit: string): Card => ({ id: `${rank}-${suit}`, rank, suit, isJoker: false } as unknown as Card);
-const joker: Card = { id: "joker", rank: "JOKER", suit: "NONE", isJoker: true } as unknown as Card;
 
 const seat = (id: string, name: string, cardCount: number, isYou = false) => ({
   id, name, cardCount, isYou, isCurrent: false, isConnected: true, isHost: false, isAi: false, reaction: false,
@@ -32,70 +31,63 @@ function vm(over: Partial<TableVM> = {}): TableVM {
   };
 }
 
-/** Opens the draw panel for Akira and returns the rendered face-down buttons, in DOM order. */
-async function openPanel(model: TableVM) {
-  const onDraw = vi.fn();
+/** Opens the draw panel and returns its card buttons in DOM order plus the click spy. */
+async function openPanel(model: TableVM, onDraw = vi.fn()) {
   const utils = render(<GameTable vm={model} reduce busy={false} onDraw={onDraw} />);
   fireEvent.click(screen.getAllByRole("button", { name: /^draw from akira, 5 cards/i })[0]!);
   const dlg = await screen.findByRole("dialog", { name: /choose one of akira's cards/i });
-  // queryAllBy, not getAllBy: an empty panel is a meaningful state to assert on.
   const buttons = within(dlg).queryAllByRole("button", { name: /^card \d+ of \d+$/i });
   return { ...utils, dlg, buttons, onDraw };
 }
 
-/** A stable, DOM-observable fingerprint for each rendered card button. */
-const fingerprint = (el: Element): string => {
-  const label = el.getAttribute("aria-label") ?? "";
-  // The only per-card identity the DOM may expose is its position label; capture the
-  // rendered subtree so a re-order is detectable even when labels look identical.
-  return `${label}|${el.querySelector("svg")?.outerHTML.length ?? 0}`;
-};
-
 describe("opponent slots render in the server's shuffled order", () => {
-  it("renders exactly the slots the server issued, in the order issued", async () => {
-    const slots = ["slotA", "slotB", "slotC", "slotD", "slotE"];
+  it("renders exactly the slots the server issued", async () => {
+    const slots = ["alpha-slot", "bravo-slot", "charlie-slot", "delta-slot", "echo-slot"];
     const { buttons } = await openPanel(vm({ drawSlots: [{ targetId: "a", slots }] }));
     expect(buttons).toHaveLength(5);
-    // Each rendered button must correspond to a real slot, and clicking sends that slot.
-    fireEvent.click(buttons[2]!);
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
-  it("a new turn re-renders the panel in the NEW order, not the previous one", async () => {
-    const first = ["s1", "s2", "s3", "s4", "s5"];
-    const second = ["s5", "s3", "s1", "s4", "s2"]; // a genuinely different permutation
+  it("each rendered position sends the slot the server put at that position", async () => {
+    const slots = ["pos-0", "pos-1", "pos-2"];
+    // Open once per position: the panel closes after a pick, by design.
+    for (let i = 0; i < slots.length; i++) {
+      const onDraw = vi.fn();
+      const { unmount } = render(<GameTable vm={vm({ drawSlots: [{ targetId: "a", slots }] })} reduce busy={false} onDraw={onDraw} />);
+      fireEvent.click(screen.getAllByRole("button", { name: /^draw from akira, 5 cards/i })[0]!);
+      const dlg = await screen.findByRole("dialog", { name: /choose one of akira's cards/i });
+      const buttons = within(dlg).getAllByRole("button", { name: /^card \d+ of \d+$/i });
+      fireEvent.click(buttons[i]!);
+      expect(onDraw, `rendered position ${i}`).toHaveBeenCalledWith("a", slots[i]);
+      unmount();
+    }
+  });
 
-    const model = vm({ drawSlots: [{ targetId: "a", slots: first }] });
-    const { rerender } = render(<GameTable vm={model} reduce busy={false} onDraw={vi.fn()} />);
-    fireEvent.click(screen.getAllByRole("button", { name: /^draw from akira, 5 cards/i })[0]!);
-    const before = (await screen.findByRole("dialog", { name: /choose one of akira's cards/i }));
-    const beforeOrder = within(before).getAllByRole("button", { name: /^card \d+ of \d+$/i }).map(fingerprint);
-    // Record which slot each rendered position maps to, by clicking through the panel.
-    const clickedFirst: string[] = [];
+  it("a new permutation changes which slot each rendered position sends", async () => {
+    // Realistic opaque ids and a genuinely different permutation, as the server would send.
+    const first = ["aGVsbG8gd29ybGQ", "c2Vjb25kIHNsaXQ", "dGhpcmQgdG9rZW4", "Zm91cnRoIHZhbHVl", "ZmlmdGggc2xvdA"];
+    const second = ["ZmlmdGggc2xvdA", "dGhpcmQgdG9rZW4", "Zm91cnRoIHZhbHVl", "Yzl2aHJ0d2Fz", "YWxwaGEgZ2FtZQ"];
+
     const onDrawA = vi.fn();
-    act(() => { rerender(<GameTable vm={model} reduce busy={false} onDraw={onDrawA} />); });
-    fireEvent.click(within(before).getAllByRole("button", { name: /^card \d+ of \d+$/i })[0]!);
-    expect(onDrawA).toHaveBeenCalledWith("a", "s1");
-
-    // Now the server issues a DIFFERENT order for the next turn.
-    const model2 = vm({ drawSlots: [{ targetId: "a", slots: second }] });
-    rerender(<GameTable vm={model2} reduce busy={false} onDraw={vi.fn()} />);
+    const firstRender = render(<GameTable vm={vm({ drawSlots: [{ targetId: "a", slots: first }] })} reduce busy={false} onDraw={onDrawA} />);
     fireEvent.click(screen.getAllByRole("button", { name: /^draw from akira, 5 cards/i })[0]!);
-    const after = await screen.findByRole("dialog", { name: /choose one of akira's cards/i });
-    const afterButtons = within(after).getAllByRole("button", { name: /^card \d+ of \d+$/i });
-    expect(afterButtons).toHaveLength(5);
+    const dlg1 = await screen.findByRole("dialog", { name: /choose one of akira's cards/i });
+    fireEvent.click(within(dlg1).getAllByRole("button", { name: /^card \d+ of \d+$/i })[0]!);
+    // The FIRST rendered card of turn 1 sends the FIRST slot of turn 1.
+    expect(onDrawA).toHaveBeenCalledWith("a", first[0]);
+    firstRender.unmount();
+
     const onDrawB = vi.fn();
-    rerender(<GameTable vm={model2} reduce busy={false} onDraw={onDrawB} />);
-    // The FIRST rendered card of the new turn must now be "s5", not "s1".
-    fireEvent.click(afterButtons[0]!);
-    expect(onDrawB).toHaveBeenCalledWith("a", "s5");
-    void clickedFirst;
-    void beforeOrder;
+    render(<GameTable vm={vm({ drawSlots: [{ targetId: "a", slots: second }] })} reduce busy={false} onDraw={onDrawB} />);
+    fireEvent.click(screen.getAllByRole("button", { name: /^draw from akira, 5 cards/i })[0]!);
+    const dlg2 = await screen.findByRole("dialog", { name: /choose one of akira's cards/i });
+    fireEvent.click(within(dlg2).getAllByRole("button", { name: /^card \d+ of \d+$/i })[0]!);
+    // The FIRST rendered card of turn 2 sends the NEW first slot - not the old one.
+    expect(onDrawB).toHaveBeenCalledWith("a", second[0]);
+    expect(second[0]).not.toBe(first[0]);
   });
 
   it("does NOT render a positional fallback when no slots were issued", async () => {
-    // If the UI fell back to cardCount positions it would expose a stable, trackable layout.
-    // With no slots it must show the empty state instead.
+    // A positional fallback would expose a stable, trackable layout. With no slots, show nothing.
     const { buttons, dlg } = await openPanel(vm({ drawSlots: [] }));
     expect(buttons).toHaveLength(0);
     expect(within(dlg).getByText(/no cards available from akira/i)).toBeTruthy();
@@ -106,9 +98,10 @@ describe("opponent slots render in the server's shuffled order", () => {
     expect(buttons).toHaveLength(0);
   });
 
-  it("renders the correct number of cards when slots are present", async () => {
+  it("renders the number of cards the server issued, not seat.cardCount", async () => {
+    // seat.cardCount is 5; only three slots exist, so only three cards may be offered.
     const { buttons } = await openPanel(vm({ drawSlots: [{ targetId: "a", slots: ["x1", "x2", "x3"] }] }));
-    expect(buttons).toHaveLength(3); // matches the issued slots, not seat.cardCount
+    expect(buttons).toHaveLength(3);
   });
 
   it("the DOM exposes no card identity or index for an opponent's card", async () => {
@@ -116,11 +109,17 @@ describe("opponent slots render in the server's shuffled order", () => {
     expect(dlg.querySelector("[data-card]")).toBeNull();
     expect(dlg.innerHTML).not.toMatch(/isJoker|hearts|spades|clubs|diamonds/);
     expect(dlg.innerHTML).not.toMatch(/cardIndex|handIndex/);
+    // No attribute may carry a slot id, so the DOM cannot be scraped for the mapping.
+    for (const el of Array.from(dlg.querySelectorAll("*"))) {
+      for (const attr of Array.from(el.attributes)) {
+        expect(attr.value, `attribute ${attr.name} leaked a slot`).not.toMatch(/q[1-5]/);
+      }
+    }
   });
 
   it("offline mode still offers positional choices against the local engine", async () => {
     const onDraw = vi.fn();
-    const model = vm({ mode: "offline", drawSlots: [], myHand: [c("8", "hearts"), joker], youId: "me" });
+    const model = vm({ mode: "offline", drawSlots: [], youId: "me" });
     render(<GameTable vm={model} reduce busy={false} onDraw={onDraw} />);
     fireEvent.click(screen.getAllByRole("button", { name: /^draw from akira, 5 cards/i })[0]!);
     const dlg = await screen.findByRole("dialog", { name: /choose one of akira's cards/i });

@@ -48,6 +48,11 @@ export interface BuildSlotsInput {
   rand?: () => number;
   /** Injected for deterministic tests. */
   slotId?: () => string;
+  /**
+   * The presentation order currently displayed for each target, so the next one is guaranteed
+   * to differ. Keyed by target player id.
+   */
+  previous?: Map<string, readonly number[]>;
 }
 
 /**
@@ -63,14 +68,7 @@ export function buildSlotTable(input: BuildSlotsInput): { table: SlotTable; payl
   for (const t of input.targets) {
     if (t.cardCount <= 0) continue;
     const n = t.cardCount;
-    // Fisher-Yates over the real indices -> a random presentation order per turn.
-    const order = Array.from({ length: n }, (_, i) => i);
-    for (let i = n - 1; i > 0; i--) {
-      const j = Math.floor(rand() * (i + 1));
-      const a = order[i] as number;
-      order[i] = order[j] as number;
-      order[j] = a;
-    }
+    const order = shuffleIndices(n, rand, input.previous?.get(t.playerId));
     const slots: string[] = [];
     const map = new Map<string, number>();
     for (const idx of order) {
@@ -87,6 +85,45 @@ export function buildSlotTable(input: BuildSlotsInput): { table: SlotTable; payl
     payload: { turnId: input.turnId, targets: payload },
   };
 }
+
+/**
+ * Fisher-Yates over `[0, n)`, guaranteeing the result differs from `avoid`.
+ *
+ * Screen position only stops identifying a card if the permutation CHANGES. Fresh slot ids alone
+ * are not enough: a shuffle that happens to reproduce the previous order leaves position 0 pointing
+ * at the same physical card as last turn, so an observer could still track it. With two cards a
+ * uniform shuffle reproduces the previous order half the time, so this is not a rare edge case.
+ *
+ * Retries a bounded number of times, then falls back to a deterministic derangement (rotate by
+ * one) so we never emit an unchanged order when a different one exists. For n === 1 there is
+ * nothing to permute, so the single order is returned as-is.
+ *
+ * Affects ONLY the opaque presentation order. The server's real hand order is never touched.
+ */
+export function shuffleIndices(n: number, rand: () => number, avoid?: readonly number[]): number[] {
+  const draw = (): number[] => {
+    const a = Array.from({ length: n }, (_, i) => i);
+    for (let i = n - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      const t = a[i] as number;
+      a[i] = a[j] as number;
+      a[j] = t;
+    }
+    return a;
+  };
+  if (n <= 1) return draw();
+
+  const differs = (a: number[]): boolean => !avoid || a.length !== avoid.length || a.some((v, i) => v !== avoid[i]);
+  for (let attempt = 0; attempt < SHUFFLE_ATTEMPTS; attempt++) {
+    const candidate = draw();
+    if (differs(candidate)) return candidate;
+  }
+  // Bounded fallback: rotate by one. Always differs from the input order for n > 1.
+  return Array.from({ length: n }, (_, i) => (avoid && avoid.length === n ? (avoid[(i + 1) % n] as number) : i));
+}
+
+/** Bounded number of reshuffles before falling back to a guaranteed-different order. */
+export const SHUFFLE_ATTEMPTS = 8;
 
 export type SlotResolution =
   | { ok: true; index: number }

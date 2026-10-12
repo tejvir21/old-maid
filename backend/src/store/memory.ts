@@ -91,11 +91,16 @@ export class MemoryStore implements Store {
     },
     resolve: async (h) => {
       const s = this.data.sessions.get(h);
-      return s && !s.revoked ? { ...s } : null;
+      if (!s || s.revoked) return null;
+      // Expiry is enforced only when present, matching the MongoStore semantics.
+      if (s.expiresAt && s.expiresAt.getTime() <= Date.now()) return null;
+      return { ...s };
     },
-    touch: async (h) => {
+    touch: async (h, ttlMs) => {
       const s = this.data.sessions.get(h);
-      if (s) s.lastSeenAt = new Date();
+      if (!s) return;
+      s.lastSeenAt = new Date();
+      if (ttlMs && ttlMs > 0) s.expiresAt = new Date(Date.now() + ttlMs);
     },
     revokeAllForUser: async (userId) => {
       for (const s of this.data.sessions.values()) if (s.userId === userId) s.revoked = true;

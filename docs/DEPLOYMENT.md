@@ -139,11 +139,23 @@ Collections created on first boot: `users`, `sessions`, `bans`, `rooms`, `games`
 `gameEvents`, `chatMessages`, `syncRecords`, `offlineGames`, `statistics`, `settings`, `admins`,
 `adminSessions`, `auditLogs`, `reports`.
 
-### Running the skipped MongoDB tests
+### Running the MongoDB tests
+
+Without a database the store contract suite **skips** its `MongoStore` half (it is never reported
+as passing). To run everything against a real MongoDB:
 
 ```bash
+# Option A — an ephemeral, disposable mongod (no database needed)
+npm install --no-save mongodb-memory-server
+npx tsx scripts/withMongo.ts -w backend     # from the repo root: (cd backend && npx tsx scripts/withMongo.ts)
+
+# Option B — your own disposable database
 MONGODB_TEST_URI="mongodb+srv://…/oldmaid_test" npm run test -w backend
 ```
+
+`mongodb-memory-server` is deliberately **not** a committed dependency: it downloads a ~100 MB
+binary at install time and would slow down CI and Render builds. `scripts/withMongo.ts` prints these
+instructions if the package is missing.
 
 Use a **disposable** database — the contract tests write and delete data.
 
@@ -206,13 +218,21 @@ assets are served untouched. `sw.js` is sent `Cache-Control: no-cache` and
 ## 11. Production gates before going live
 
 1. **MongoDB is configured and tested.** Run the store contract suite against a throwaway database
-   (`MONGODB_TEST_URI=… npm run test -w backend`) and confirm 0 skipped.
-2. **Create the first SUPER_ADMIN** using the bootstrap procedure in §5. Confirm it can sign in at
+   (`npx tsx scripts/withMongo.ts` in `backend/`, or `MONGODB_TEST_URI=… npm run test -w backend`)
+   and confirm 0 skipped.
+2. **Smoke-test authentication before trusting `/health`.** A connected database does **not**
+   prove login works. Confirm all four:
+   - `POST /api/auth/guest` → `201`
+   - `POST /api/auth/session` with that `sessionId` → `200` (this returned `500` when
+     `sanitizeFilter` was enabled — see `docs/PHASE_AUDIT.md`)
+   - `GET /api/auth/me` with the token → `200`
+   - Socket.IO connects and `create_room` succeeds (browser DevTools → Network → WS)
+3. **Create the first SUPER_ADMIN** using the bootstrap procedure in §5. Confirm it can sign in at
    `/admin/login` and that `/admin/database` and `/admin/audit-logs` work.
-3. **CORS origins** list your real frontend host and nothing else.
-4. **`JWT_ACCESS_SECRET`** is ≥ 32 random characters and is *not* the development default.
-5. **Accept that restarts end active matches.** See §12.
-6. **Verify the PWA in a real browser**: install it, then enable airplane mode and confirm the app
+4. **CORS origins** list your real frontend host and nothing else.
+5. **`JWT_ACCESS_SECRET`** is ≥ 32 random characters and is *not* the development default.
+6. **Accept that restarts end active matches.** See §12.
+7. **Verify the PWA in a real browser**: install it, then enable airplane mode and confirm the app
    launches and a full offline game is playable. Only the *build output* is verified by CI.
 
 ---

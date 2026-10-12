@@ -24,6 +24,8 @@ export interface SessionRecord {
   createdAt: Date;
   lastSeenAt: Date;
   revoked: boolean;
+  /** Optional sliding expiry. Absent means "until explicitly revoked". */
+  expiresAt?: Date;
 }
 
 export interface BanRecord {
@@ -260,7 +262,8 @@ export interface Store {
   sessions: {
     create(userId: string, sessionHash: string): Promise<void>;
     resolve(sessionHash: string): Promise<SessionRecord | null>;
-    touch(sessionHash: string): Promise<void>;
+    /** `ttlMs` extends the sliding expiry on each use; omit for "no expiry". */
+    touch(sessionHash: string, ttlMs?: number): Promise<void>;
     revokeAllForUser(userId: string): Promise<void>;
   };
   bans: {

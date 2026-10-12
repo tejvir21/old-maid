@@ -43,6 +43,35 @@ function contract(name: string, make: () => Promise<Store>, skip = false) {
       expect(await s.sessions.resolve(h)).toBeNull();
     });
 
+    it("sessions: an unknown hash never resolves", async () => {
+      expect(await s.sessions.resolve(randomUUID())).toBeNull();
+    });
+
+    it("sessions: revocation is scoped to the target user", async () => {
+      const a = await s.users.createGuest();
+      const c = await s.users.createGuest();
+      const ha = randomUUID();
+      const hc = randomUUID();
+      await s.sessions.create(a.id, ha);
+      await s.sessions.create(c.id, hc);
+      await s.sessions.revokeAllForUser(a.id);
+      expect(await s.sessions.resolve(ha)).toBeNull();
+      expect((await s.sessions.resolve(hc))?.userId).toBe(c.id); // untouched
+    });
+
+    it("sessions: expired sessions are rejected and touch() slides the window", async () => {
+      const u = await s.users.createGuest();
+      const h = randomUUID();
+      await s.sessions.create(u.id, h);
+      // A tiny TTL expires almost immediately.
+      await s.sessions.touch(h, 1);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(await s.sessions.resolve(h)).toBeNull();
+      // Refreshing slides the window forward, so an active user is never logged out.
+      await s.sessions.touch(h, 60_000);
+      expect((await s.sessions.resolve(h))?.userId).toBe(u.id);
+    });
+
     it("bans: permanent, temporary, expired, lifted", async () => {
       const u = await s.users.createGuest();
       expect(await s.bans.isBanned(u.id)).toBe(false);

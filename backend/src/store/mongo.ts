@@ -30,9 +30,20 @@ userSchema.index({ email: 1 }, { unique: true, partialFilterExpression: { email:
 userSchema.index({ username: 1 });
 
 const sessionSchema = new Schema(
-  { _id: { type: String }, userId: { type: String, index: true }, lastSeenAt: Date, revoked: { type: Boolean, default: false } },
+  {
+    _id: { type: String },
+    userId: { type: String, index: true },
+    lastSeenAt: Date,
+    revoked: { type: Boolean, default: false },
+    /**
+     * Optional sliding expiry. `resolve()` only rejects when this is present and in the past,
+     * so sessions written before it existed keep working (they are revoked explicitly instead).
+     */
+    expiresAt: Date,
+  },
   { timestamps: { createdAt: true, updatedAt: false }, collection: "sessions" },
 );
+sessionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0, partialFilterExpression: { expiresAt: { $type: "date" } } });
 
 const banSchema = new Schema(
   { userId: { type: String, index: true }, reason: String, createdBy: String, expiresAt: Date, active: { type: Boolean, default: true } },
@@ -216,6 +227,25 @@ const zeroStats = (): StatsSummary => ({ online: { games: 0, wins: 0, losses: 0 
 /** Escapes a user-supplied search term before it is embedded in a RegExp (no injection). */
 const escRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+/**
+ * Runtime guard for identifiers that reach a query from OUTSIDE the store (route params,
+ * request bodies). `sanitizeFilter` used to cover this globally, but it also corrupted the
+ * store's own legitimate operator filters, so it was removed (see `connect()`).
+ *
+ * It deliberately inspects a single value, never a whole filter: the store's internal filters
+ * legitimately contain operator documents such as `{ revoked: { $ne: true } }`.
+ */
+export function assertNoOperatorInjection(value: unknown, label: string): void {
+  if (value === null || value === undefined) return;
+  if (Array.isArray(value)) {
+    for (const v of value) assertNoOperatorInjection(v, label);
+    return;
+  }
+  if (typeof value === "object") {
+    throw new Error(`Refusing to build a query for ${label}: object values are not allowed`);
+  }
+}
+
 /** Fields the database console may search on per collection (never secrets). */
 const SEARCHABLE_FIELDS: Record<string, string[]> = {
   users: ["username", "email", "_id"], rooms: ["code", "hostId"], games: ["_id", "roomId"],
@@ -307,8 +337,23 @@ export class MongoStore implements Store {
 
   async connect(): Promise<void> {
     mongoose.set("strictQuery", true);
-    // Never let user-supplied operators ($ne, $gt, …) reach a query.
-    mongoose.set("sanitizeFilter", true);
+    // NOTE: `sanitizeFilter` is deliberately NOT enabled globally.
+    //
+    // `sanitizeFilter` rewrites ANY filter value that contains a `$` key into `{ $eq: <value> }`.
+    // This codebase legitimately queries with operators (`revoked: { $ne: true }`,
+    // `expiresAt: { $gt: now }`, `$or`, `$in`, `$exists`, ...), so enabling it turned each of
+    // those into `{ revoked: { $eq: { $ne: true } } }`, which then failed to cast an object
+    // onto the Boolean path:
+    //
+    //   Cast to Boolean failed for value "{ '$ne': true }" (type Object) at path "revoked"
+    //
+    // That broke every player lookup (Session.resolve, User.findById) and, through it, guest
+    // session creation, HTTP auth and the Socket.IO handshake.
+    //
+    // Operator-injection protection is provided where it actually matters: every route input is
+    // parsed by a Zod schema (ids/emails are validated as primitives, so an object can never
+    // reach a filter), and free-text search terms are escaped with `escRe()` before being
+    // embedded in a RegExp. `assertNoOperatorInjection()` guards the dynamic paths below.
     await mongoose.connect(this.uri, { serverSelectionTimeoutMS: 8000 });
     await Promise.all([User, Session, Ban, RoomM, GameM, GamePlayerM, GameEventM, ChatM, SyncM, OfflineGameM, StatsM, SettingsM, AdminM, AdminSessionM, AuditM, ReportM].map((m) => m.init()));
   }
@@ -319,12 +364,22 @@ export class MongoStore implements Store {
       const d = await User.create({ _id: id, username: `Guest-${id.slice(0, 4).toUpperCase()}`, status: "guest" });
       return toUser(d.toObject()) as UserRecord;
     },
-    findById: async (id) => toUser(await User.findOne({ _id: id, isDeleted: { $ne: true } }).lean()),
-    findByEmail: async (email) => toUser(await User.findOne({ email: email.toLowerCase(), isDeleted: { $ne: true } }).lean()),
-    findByUsername: async (username) =>
-      toUser(await User.findOne({ username: new RegExp(`^${username.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i"), isDeleted: { $ne: true } }).lean()),
-    upgradeToAccount: async (id, d) =>
-      toUser(await User.findOneAndUpdate({ _id: id, status: "guest" }, { $set: { username: d.username, email: d.email.toLowerCase(), passwordHash: d.passwordHash, status: "active" } }, { new: true }).lean()),
+    findById: async (id) => {
+      assertNoOperatorInjection(id, "users.findById._id");
+      return toUser(await User.findOne({ _id: id, isDeleted: { $ne: true } }).lean());
+    },
+    findByEmail: async (email) => {
+      assertNoOperatorInjection(email, "users.findByEmail.email");
+      return toUser(await User.findOne({ email: email.toLowerCase(), isDeleted: { $ne: true } }).lean());
+    },
+    findByUsername: async (username) => {
+      assertNoOperatorInjection(username, "users.findByUsername.username");
+      return toUser(await User.findOne({ username: new RegExp(`^${escRe(username)}$`, "i"), isDeleted: { $ne: true } }).lean());
+    },
+    upgradeToAccount: async (id, d) => {
+      assertNoOperatorInjection(id, "users.upgradeToAccount._id");
+      return toUser(await User.findOneAndUpdate({ _id: id, status: "guest" }, { $set: { username: d.username, email: d.email.toLowerCase(), passwordHash: d.passwordHash, status: "active" } }, { new: true }).lean());
+    },
     createAccount: async (d) => {
       const doc = await User.create({ _id: randomUUID(), username: d.username, email: d.email.toLowerCase(), passwordHash: d.passwordHash, status: "active" });
       return toUser(doc.toObject()) as UserRecord;
@@ -349,14 +404,34 @@ export class MongoStore implements Store {
   };
 
   sessions: Store["sessions"] = {
-    create: async (userId, hash) => void (await Session.create({ _id: hash, userId, lastSeenAt: new Date() })),
+    create: async (userId, hash) => void (await Session.create({ _id: hash, userId, lastSeenAt: new Date(), revoked: false })),
     resolve: async (hash) => {
+      assertNoOperatorInjection(hash, "sessions.resolve._id");
+      // `revoked: { $ne: true }` is intentional and NOT a bug: it matches `false`, `null` and
+      // documents written before the field existed. Replacing it with `revoked: false` would
+      // silently lock out every legacy session that lacks the field.
+      // Expiry is optional and only enforced when present, so pre-existing sessions keep working.
       const d = await Session.findOne({ _id: hash, revoked: { $ne: true } }).lean();
       if (!d) return null;
-      return { sessionHash: String(d["_id"]), userId: String(d["userId"]), createdAt: d["createdAt"] as Date, lastSeenAt: d["lastSeenAt"] as Date, revoked: false } satisfies SessionRecord;
+      const expiresAt = d["expiresAt"] ? (d["expiresAt"] as Date) : null;
+      if (expiresAt && expiresAt.getTime() <= Date.now()) return null; // expired
+      return {
+        sessionHash: String(d["_id"]), userId: String(d["userId"]), createdAt: d["createdAt"] as Date,
+        lastSeenAt: d["lastSeenAt"] as Date, revoked: false, ...(expiresAt ? { expiresAt } : {}),
+      } satisfies SessionRecord;
     },
-    touch: async (hash) => void (await Session.updateOne({ _id: hash }, { $set: { lastSeenAt: new Date() } })),
-    revokeAllForUser: async (userId) => void (await Session.updateMany({ userId }, { $set: { revoked: true } })),
+    touch: async (hash, ttlMs) => {
+      assertNoOperatorInjection(hash, "sessions.touch._id");
+      const at = new Date();
+      void (await Session.updateOne(
+        { _id: hash },
+        ttlMs && ttlMs > 0 ? { $set: { lastSeenAt: at, expiresAt: new Date(at.getTime() + ttlMs) } } : { $set: { lastSeenAt: at } },
+      ));
+    },
+    revokeAllForUser: async (userId) => {
+      assertNoOperatorInjection(userId, "sessions.revokeAllForUser.userId");
+      void (await Session.updateMany({ userId }, { $set: { revoked: true } }));
+    },
   };
 
   bans: Store["bans"] = {
@@ -577,6 +652,7 @@ export class MongoStore implements Store {
         ...(rec.ip ? { ip: rec.ip } : {}), ...(rec.userAgent ? { userAgent: rec.userAgent } : {}), revoked: false,
       })),
       resolve: async (h) => {
+        assertNoOperatorInjection(h, "adminSessions.resolve._id");
         const d = await AdminSessionM.findOne({ _id: h, revoked: { $ne: true }, expiresAt: { $gt: new Date() } }).lean();
         if (!d) return null;
         return {
@@ -585,9 +661,9 @@ export class MongoStore implements Store {
           ...(d["ip"] ? { ip: String(d["ip"]) } : {}), ...(d["userAgent"] ? { userAgent: String(d["userAgent"]) } : {}),
         } satisfies AdminSessionRecord;
       },
-      touch: async (h, at) => void (await AdminSessionM.updateOne({ _id: h }, { $set: { lastSeenAt: at } })),
-      revoke: async (h) => void (await AdminSessionM.updateOne({ _id: h }, { $set: { revoked: true } })),
-      revokeAllForAdmin: async (adminId) => void (await AdminSessionM.updateMany({ adminId }, { $set: { revoked: true } })),
+      touch: async (h, at) => { assertNoOperatorInjection(h, "adminSessions.touch._id"); void (await AdminSessionM.updateOne({ _id: h }, { $set: { lastSeenAt: at } })); },
+      revoke: async (h) => { assertNoOperatorInjection(h, "adminSessions.revoke._id"); void (await AdminSessionM.updateOne({ _id: h }, { $set: { revoked: true } })); },
+      revokeAllForAdmin: async (adminId) => { assertNoOperatorInjection(adminId, "adminSessions.revokeAllForAdmin.adminId"); void (await AdminSessionM.updateMany({ adminId }, { $set: { revoked: true } })); },
       listActive: async (now) => (await AdminSessionM.find({ revoked: { $ne: true }, expiresAt: { $gt: now } }).lean()).map((d) => ({
         sessionHash: String(d["_id"]), adminId: String(d["adminId"]), createdAt: d["createdAt"] as Date,
         lastSeenAt: d["lastSeenAt"] as Date, expiresAt: d["expiresAt"] as Date, revoked: false,
@@ -610,7 +686,7 @@ export class MongoStore implements Store {
     },
     reports: {
       create: async (r) => fromReport(await ReportM.create({ ...r, status: "OPEN", history: [] }).then((d) => d.toObject())) as ReportRecord,
-      findById: async (id) => fromReport(await ReportM.findOne({ _id: id }).lean()),
+      findById: async (id) => { assertNoOperatorInjection(id, "reports.findById._id"); return fromReport(await ReportM.findOne({ _id: id }).lean()); },
       list: async ({ q, status, category, assignedTo, limit, offset }) => {
         const filter: Rec = {};
         if (status) filter["status"] = status;
@@ -623,8 +699,10 @@ export class MongoStore implements Store {
         ]);
         return { items: rows.map(fromReport).filter((r): r is ReportRecord => r !== null), total, limit, offset };
       },
-      update: async (id, patch, historyEntry) =>
-        fromReport(await ReportM.findOneAndUpdate({ _id: id }, { $set: patch, $push: { history: historyEntry } }, { new: true }).lean()),
+      update: async (id, patch, historyEntry) => {
+        assertNoOperatorInjection(id, "reports.update._id");
+        return fromReport(await ReportM.findOneAndUpdate({ _id: id }, { $set: patch, $push: { history: historyEntry } }, { new: true }).lean());
+      },
       countByStatus: async () => {
         const rows = await ReportM.find({ status: { $in: ["OPEN", "INVESTIGATE", "RESOLVE", "DISMISS"] } }).lean();
         const c: Record<string, number> = {};
@@ -646,12 +724,14 @@ export class MongoStore implements Store {
       return { items: rows.map(normalizeDoc), total, limit, offset };
     },
     updateRecord: async (name, id, changes) => {
+      assertNoOperatorInjection(id, `db.updateRecord.${name}._id`);
       const m = CONSOLE_MODELS[name];
       if (!m) return null;
       const d = await m.findOneAndUpdate({ _id: id } as Rec, { $set: changes }, { new: true }).lean();
       return d ? normalizeDoc(d) : null;
     },
     softDelete: async (name, id) => {
+      assertNoOperatorInjection(id, `db.softDelete.${name}._id`);
       const m = CONSOLE_MODELS[name];
       if (!m) return false;
       const res = name === "users"
@@ -661,6 +741,7 @@ export class MongoStore implements Store {
     },
     purge: async (name, id) => {
       if (PROTECTED_COLLECTIONS.has(name)) return false;
+      assertNoOperatorInjection(id, `db.purge.${name}._id`);
       const m = CONSOLE_MODELS[name];
       if (!m) return false;
       const res = await m.deleteOne({ _id: id } as Rec);
